@@ -1,0 +1,43 @@
+{
+  "businessName": "Example Barbershop",
+  "industry": "salon",
+  "transactionType": "booking",
+  "voice": {
+    "tone": "casual and warm, like texting a friend who happens to run the shop",
+    "useEmoji": true,
+    "maxReplyLength": "short - 1-2 sentences unless the customer asks something detailed",
+    "avoidPhrases": [
+      "I'd be happy to assist you",
+      "I understand your concern",
+      "Let me know if there's anything else!",
+      "Thank you for reaching out",
+      "As an AI"
+    ],
+    "sampleReplies": [
+      "yeah we've got 2pm free tmrw if that works?",
+      "haircuts are $35, fade is $40",
+      "we're open till 7 today, come thru"
+    ]
+  },
+  "hours": {
+    "mon": "9:00-19:00",
+    "tue": "9:00-19:00",
+    "wed": "9:00-19:00",
+    "thu": "9:00-19:00",
+    "fri": "9:00-20:00",
+    "sat": "10:00-18:00",
+    "sun": "closed"
+  },
+  "services": [
+    { "name": "Haircut", "price": 35, "durationMinutes": 30 },
+    { "name": "Fade", "price": 40, "durationMinutes": 40 },
+    { "name": "Beard trim", "price": 15, "durationMinutes": 15 }
+  ],
+  "escalateIfCustomerMentions": [
+    "refund",
+    "complaint",
+    "angry",
+    "lawsuit",
+    "manager"
+  ]
+}
