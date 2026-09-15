@@ -7,6 +7,7 @@ const {
   generateReply,
   computeTypingDelayMs
 } = require('./replyEngine');
+const { computeAvailableSlots, confirmBooking } = require('./booking');
 
 const app = express();
 app.use(express.json());
@@ -17,6 +18,42 @@ const businessProfile = JSON.parse(
     'utf8'
   )
 );
+
+const bookings = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, 'bookings.json'),
+    'utf8'
+  )
+);
+
+function formatDateYYYYMMDD(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+const BOOKING_CONFIRMED_REGEX =
+  /\n?\[BOOKING_CONFIRMED:\s*date=([^,]+),\s*time=([^,]+),\s*service=([^\]]+)\]\s*$/;
+
+function extractBookingConfirmation(replyText) {
+  const match = replyText.match(BOOKING_CONFIRMED_REGEX);
+
+  if (!match) {
+    return { cleanReply: replyText, booking: null };
+  }
+
+  const [, date, time, service] = match;
+
+  return {
+    cleanReply: replyText.slice(0, match.index).trimEnd(),
+    booking: {
+      date: date.trim(),
+      time: time.trim(),
+      service: service.trim()
+    }
+  };
+}
 
 const conversations = {};
 
@@ -313,16 +350,52 @@ async function handleIncomingMessage(platform, senderId, text) {
     `[GENERATING REPLY] ${platform}:${senderId} -> ${text}`
   );
 
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const todayDate = formatDateYYYYMMDD(today);
+  const tomorrowDate = formatDateYYYYMMDD(tomorrow);
+
+  const availableSlots = {
+    todayDate,
+    tomorrowDate,
+    today: computeAvailableSlots(businessProfile, bookings, todayDate),
+    tomorrow: computeAvailableSlots(businessProfile, bookings, tomorrowDate)
+  };
+
   const result = await generateReply(
     businessProfile,
     history,
-    text
+    text,
+    availableSlots
   );
 
-  const reply = result.reply;
   const needsHumanReview = result.needsHumanReview;
 
-  console.log(`[GENERATED REPLY] ${reply}`);
+  console.log(`[GENERATED REPLY] ${result.reply}`);
+
+  const { cleanReply, booking } = extractBookingConfirmation(result.reply);
+
+  if (booking) {
+    try {
+      confirmBooking(
+        businessProfile,
+        bookings,
+        booking.date,
+        booking.time,
+        booking.service,
+        key
+      );
+
+      console.log(
+        `[BOOKING CONFIRMED] ${key}: ${booking.service} on ${booking.date} at ${booking.time}`
+      );
+    } catch (err) {
+      console.error('[BOOKING CONFIRMATION ERROR]', err);
+    }
+  }
+
+  const reply = cleanReply;
 
   history.push({
     role: 'user',
@@ -579,11 +652,48 @@ app.post('/test-message', async (req, res) => {
     const key = 'test:local-user';
     const history = getHistory(key);
 
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const todayDate = formatDateYYYYMMDD(today);
+    const tomorrowDate = formatDateYYYYMMDD(tomorrow);
+
+    const availableSlots = {
+      todayDate,
+      tomorrowDate,
+      today: computeAvailableSlots(businessProfile, bookings, todayDate),
+      tomorrow: computeAvailableSlots(businessProfile, bookings, tomorrowDate)
+    };
+
     const result = await generateReply(
       businessProfile,
       history,
-      message
+      message,
+      availableSlots
     );
+
+    const { cleanReply, booking } = extractBookingConfirmation(result.reply);
+
+    if (booking) {
+      try {
+        confirmBooking(
+          businessProfile,
+          bookings,
+          booking.date,
+          booking.time,
+          booking.service,
+          key
+        );
+
+        console.log(
+          `[BOOKING CONFIRMED] ${key}: ${booking.service} on ${booking.date} at ${booking.time}`
+        );
+      } catch (err) {
+        console.error('[BOOKING CONFIRMATION ERROR]', err);
+      }
+    }
+
+    result.reply = cleanReply;
 
     history.push({
       role: 'user',

@@ -2,7 +2,11 @@ require('dotenv').config();
 
 const PROVIDER = (process.env.AI_PROVIDER || 'anthropic').toLowerCase();
 
-function buildSystemPrompt(businessProfile) {
+function formatSlotList(slots) {
+  return slots.length > 0 ? slots.join(', ') : 'none';
+}
+
+function buildSystemPrompt(businessProfile, availableSlots) {
   const { businessName, voice, hours, services, escalateIfCustomerMentions } = businessProfile;
 
   return `You are replying to customer messages on behalf of ${businessName}, a real small business.
@@ -19,12 +23,19 @@ BUSINESS INFO:
 - Hours: ${JSON.stringify(hours)}
 - Services offered: ${services.map(s => `${s.name} ($${s.price}, ${s.durationMinutes} min)`).join('; ')}
 
+AVAILABLE SLOTS:
+- Today is ${availableSlots.todayDate}. Today's available slots: ${formatSlotList(availableSlots.today)}
+- Tomorrow is ${availableSlots.tomorrowDate}. Tomorrow's available slots: ${formatSlotList(availableSlots.tomorrow)}
+- Only offer times from these lists. Never invent or guess a time that isn't listed.
+
 RULES:
 - Sound like a real person texting back, not customer support. Be brief. Real staff don't over-explain.
-- If the customer wants to book, confirm the specific service and propose a specific time slot (you will be given available slots separately when booking logic is wired up).
+- If the customer wants to book, confirm the specific service and propose a specific time from the available slots above.
 - If the customer message mentions any of: ${escalateIfCustomerMentions.join(', ')} — do NOT try to resolve it yourself. Respond briefly and say a real person will follow up, and flag this conversation for human review.
 - Never say you are an AI unless directly and explicitly asked.
-- Output ONLY the reply text. No preamble, no explanation, no quotation marks around it.`;
+- When the customer clearly confirms a specific time AND service (e.g. "yeah 2:30 works" after being offered it), end your reply with a hidden marker line on its own new line, in exactly this format: [BOOKING_CONFIRMED: date=YYYY-MM-DD, time=HH:MM, service=<service name>] — using the real date (from "Today is"/"Tomorrow is" above), the confirmed time, and the exact service name. This marker is never shown to the customer, so do not mention it or refer to it in the customer-facing part of the reply.
+- If no booking is being confirmed, do not include the marker line at all.
+- Output ONLY the reply text (plus the marker line when a booking is confirmed). No preamble, no explanation, no quotation marks around it.`;
 }
 
 async function callAnthropic(systemPrompt, conversationHistory, incomingMessage) {
@@ -91,13 +102,13 @@ async function callGroq(systemPrompt, conversationHistory, incomingMessage) {
   return (completion.choices[0]?.message?.content ?? '').trim();
 }
 
-async function generateReply(businessProfile, conversationHistory, incomingMessage) {
+async function generateReply(businessProfile, conversationHistory, incomingMessage, availableSlots) {
   const lowerMsg = incomingMessage.toLowerCase();
   const needsHumanReview = businessProfile.escalateIfCustomerMentions.some(term =>
     lowerMsg.includes(term.toLowerCase())
   );
 
-  const systemPrompt = buildSystemPrompt(businessProfile);
+  const systemPrompt = buildSystemPrompt(businessProfile, availableSlots);
 
   let reply;
   if (PROVIDER === 'groq') {
