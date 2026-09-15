@@ -752,6 +752,21 @@ app.get('/health', (req, res) => {
 });
 
 // ---------------------------------------------------------------------
+// TEMPORARY DEBUG ROUTE — remove once booking persistence is confirmed
+// ---------------------------------------------------------------------
+
+app.get('/debug-bookings', (req, res) => {
+  const currentBookings = JSON.parse(
+    fs.readFileSync(
+      path.join(__dirname, 'bookings.json'),
+      'utf8'
+    )
+  );
+
+  res.json(currentBookings);
+});
+
+// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
