@@ -612,10 +612,29 @@ app.post('/test-message', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// HEALTH CHECK
+// LANDING PAGE
 // ---------------------------------------------------------------------
 
 app.get('/', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Autumn Assistant</title>
+</head>
+<body>
+<h1>Autumn Assistant</h1>
+<p>AI-powered customer messaging for businesses on WhatsApp and Instagram.</p>
+<p>Contact: <a href="mailto:autumnhqapp@gmail.com">autumnhqapp@gmail.com</a></p>
+</body>
+</html>`);
+});
+
+// ---------------------------------------------------------------------
+// HEALTH CHECK
+// ---------------------------------------------------------------------
+
+app.get('/health', (req, res) => {
   res.json({
     status: 'online',
     service: 'AI assistant'
