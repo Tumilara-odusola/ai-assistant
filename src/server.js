@@ -766,6 +766,27 @@ app.get('/debug-bookings', (req, res) => {
   res.json(currentBookings);
 });
 
+app.get('/debug-env-check', (req, res) => {
+  const varNames = [
+    'DATABASE_URL',
+    'DATABASE_PUBLIC_URL',
+    'POSTGRES_URL',
+    'PGHOST',
+    'PGPORT',
+    'PGDATABASE',
+    'PGUSER',
+    'PGPASSWORD'
+  ];
+
+  const present = {};
+
+  for (const name of varNames) {
+    present[name] = Boolean(process.env[name]);
+  }
+
+  res.json(present);
+});
+
 // ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
