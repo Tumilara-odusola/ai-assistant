@@ -37,6 +37,9 @@ function formatDateYYYYMMDD(date) {
 const BOOKING_CONFIRMED_REGEX =
   /\n?\[BOOKING_CONFIRMED:\s*date=([^,]+),\s*time=([^,]+),\s*service=([^\]]+)\]\s*$/;
 
+const BOOKING_SAVE_FAILURE_MESSAGE =
+  "Sorry, something went wrong confirming that — can you try again in a moment?";
+
 function extractBookingConfirmation(replyText) {
   const match = replyText.match(BOOKING_CONFIRMED_REGEX);
 
@@ -382,6 +385,8 @@ async function handleIncomingMessage(platform, senderId, text) {
 
   const { cleanReply, booking } = extractBookingConfirmation(result.reply);
 
+  let reply = cleanReply;
+
   if (booking) {
     try {
       await confirmBooking(
@@ -398,10 +403,9 @@ async function handleIncomingMessage(platform, senderId, text) {
       );
     } catch (err) {
       console.error('[BOOKING CONFIRMATION ERROR]', err);
+      reply = BOOKING_SAVE_FAILURE_MESSAGE;
     }
   }
-
-  const reply = cleanReply;
 
   history.push({
     role: 'user',
@@ -685,6 +689,8 @@ app.post('/test-message', async (req, res) => {
 
     const { cleanReply, booking } = extractBookingConfirmation(result.reply);
 
+    result.reply = cleanReply;
+
     if (booking) {
       try {
         await confirmBooking(
@@ -701,10 +707,9 @@ app.post('/test-message', async (req, res) => {
         );
       } catch (err) {
         console.error('[BOOKING CONFIRMATION ERROR]', err);
+        result.reply = BOOKING_SAVE_FAILURE_MESSAGE;
       }
     }
-
-    result.reply = cleanReply;
 
     history.push({
       role: 'user',
