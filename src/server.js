@@ -8,6 +8,7 @@ const {
   computeTypingDelayMs
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
+const { initDatabase } = require('./db');
 
 const app = express();
 app.use(express.json());
@@ -356,11 +357,16 @@ async function handleIncomingMessage(platform, senderId, text) {
   const todayDate = formatDateYYYYMMDD(today);
   const tomorrowDate = formatDateYYYYMMDD(tomorrow);
 
+  const [todaySlots, tomorrowSlots] = await Promise.all([
+    computeAvailableSlots(businessProfile, bookings, todayDate),
+    computeAvailableSlots(businessProfile, bookings, tomorrowDate)
+  ]);
+
   const availableSlots = {
     todayDate,
     tomorrowDate,
-    today: computeAvailableSlots(businessProfile, bookings, todayDate),
-    tomorrow: computeAvailableSlots(businessProfile, bookings, tomorrowDate)
+    today: todaySlots,
+    tomorrow: tomorrowSlots
   };
 
   const result = await generateReply(
@@ -378,7 +384,7 @@ async function handleIncomingMessage(platform, senderId, text) {
 
   if (booking) {
     try {
-      confirmBooking(
+      await confirmBooking(
         businessProfile,
         bookings,
         booking.date,
@@ -658,11 +664,16 @@ app.post('/test-message', async (req, res) => {
     const todayDate = formatDateYYYYMMDD(today);
     const tomorrowDate = formatDateYYYYMMDD(tomorrow);
 
+    const [todaySlots, tomorrowSlots] = await Promise.all([
+      computeAvailableSlots(businessProfile, bookings, todayDate),
+      computeAvailableSlots(businessProfile, bookings, tomorrowDate)
+    ]);
+
     const availableSlots = {
       todayDate,
       tomorrowDate,
-      today: computeAvailableSlots(businessProfile, bookings, todayDate),
-      tomorrow: computeAvailableSlots(businessProfile, bookings, tomorrowDate)
+      today: todaySlots,
+      tomorrow: tomorrowSlots
     };
 
     const result = await generateReply(
@@ -676,7 +687,7 @@ app.post('/test-message', async (req, res) => {
 
     if (booking) {
       try {
-        confirmBooking(
+        await confirmBooking(
           businessProfile,
           bookings,
           booking.date,
@@ -793,14 +804,23 @@ app.get('/debug-env-check', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(
-    `AI assistant server running on http://localhost:${PORT}`
-  );
+async function start() {
+  await initDatabase();
 
-  console.log(
-    `Try it: curl -X POST http://localhost:${PORT}/test-message ` +
-    `-H "Content-Type: application/json" ` +
-    `-d '{"message":"hey do you have anything free tomorrow?"}'`
-  );
+  app.listen(PORT, () => {
+    console.log(
+      `AI assistant server running on http://localhost:${PORT}`
+    );
+
+    console.log(
+      `Try it: curl -X POST http://localhost:${PORT}/test-message ` +
+      `-H "Content-Type: application/json" ` +
+      `-d '{"message":"hey do you have anything free tomorrow?"}'`
+    );
+  });
+}
+
+start().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });

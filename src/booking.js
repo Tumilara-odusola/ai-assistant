@@ -1,7 +1,4 @@
-const fs = require('fs');
-const path = require('path');
-
-const BOOKINGS_PATH = path.join(__dirname, 'bookings.json');
+const { pool } = require('./db');
 
 const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
@@ -16,8 +13,9 @@ function minutesToTimeString(totalMinutes) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
-// Each booking is expected as: { date: 'YYYY-MM-DD', time: 'HH:MM', durationMinutes }
-function computeAvailableSlots(businessProfile, bookings, dateString) {
+// `bookings` is kept as a parameter for call-site compatibility but is
+// unused — availability is now read from the Postgres `bookings` table.
+async function computeAvailableSlots(businessProfile, bookings, dateString) {
   const dayKey = DAY_KEYS[new Date(`${dateString}T00:00:00`).getDay()];
   const hoursRange = businessProfile.hours[dayKey];
 
@@ -33,12 +31,15 @@ function computeAvailableSlots(businessProfile, bookings, dateString) {
     ...businessProfile.services.map((service) => service.durationMinutes)
   );
 
-  const dayBookings = bookings.filter((booking) => booking.date === dateString);
+  const { rows: dayBookings } = await pool.query(
+    'SELECT time, duration_minutes FROM bookings WHERE date = $1',
+    [dateString]
+  );
 
   const isOccupied = (start, end) =>
     dayBookings.some((booking) => {
       const bookingStart = parseTimeToMinutes(booking.time);
-      const bookingEnd = bookingStart + booking.durationMinutes;
+      const bookingEnd = bookingStart + booking.duration_minutes;
       return start < bookingEnd && end > bookingStart;
     });
 
@@ -57,26 +58,28 @@ function computeAvailableSlots(businessProfile, bookings, dateString) {
   return slots;
 }
 
-function confirmBooking(businessProfile, bookings, date, time, serviceName, customerId) {
+// `bookings` is kept as a parameter for call-site compatibility but is
+// unused — the booking is now persisted to the Postgres `bookings` table.
+async function confirmBooking(businessProfile, bookings, date, time, serviceName, customerId) {
   const service = businessProfile.services.find((s) => s.name === serviceName);
 
   if (!service) {
     throw new Error(`Unknown service: ${serviceName}`);
   }
 
-  const booking = {
+  await pool.query(
+    `INSERT INTO bookings (date, time, duration_minutes, service, customer_id)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [date, time, service.durationMinutes, serviceName, customerId]
+  );
+
+  return {
     date,
     time,
     durationMinutes: service.durationMinutes,
     service: serviceName,
     customerId
   };
-
-  bookings.push(booking);
-
-  fs.writeFileSync(BOOKINGS_PATH, JSON.stringify(bookings, null, 2));
-
-  return booking;
 }
 
 module.exports = { computeAvailableSlots, confirmBooking };
