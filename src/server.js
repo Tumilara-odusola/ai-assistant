@@ -8,7 +8,7 @@ const {
   computeTypingDelayMs
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
-const { initDatabase } = require('./db');
+const { pool, initDatabase } = require('./db');
 
 const app = express();
 app.use(express.json());
@@ -756,6 +756,89 @@ app.get('/health', (req, res) => {
     status: 'online',
     service: 'AI assistant'
   });
+});
+
+// ---------------------------------------------------------------------
+// BOOKINGS DASHBOARD
+// ---------------------------------------------------------------------
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+app.get('/dashboard', async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT * FROM bookings ORDER BY date, time'
+  );
+
+  const tableRows = rows.map((booking) => `
+    <tr>
+      <td>${escapeHtml(booking.date)}</td>
+      <td>${escapeHtml(booking.time)}</td>
+      <td>${escapeHtml(booking.service)}</td>
+      <td>${escapeHtml(booking.customer_id)}</td>
+      <td>${escapeHtml(new Date(booking.created_at).toLocaleString())}</td>
+    </tr>`).join('');
+
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bookings Dashboard</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f7f7f8;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 40px;
+  }
+  h1 {
+    font-size: 20px;
+    margin-bottom: 20px;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    max-width: 800px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid #eee;
+    font-size: 14px;
+  }
+  th {
+    background: #fafafa;
+    font-weight: 600;
+    color: #555;
+  }
+  tr:last-child td {
+    border-bottom: none;
+  }
+  .empty {
+    color: #888;
+  }
+</style>
+</head>
+<body>
+<h1>Bookings</h1>
+${rows.length === 0 ? '<p class="empty">No bookings yet.</p>' : `<table>
+  <thead>
+    <tr><th>Date</th><th>Time</th><th>Service</th><th>Customer</th><th>Booked At</th></tr>
+  </thead>
+  <tbody>${tableRows}
+  </tbody>
+</table>`}
+</body>
+</html>`);
 });
 
 // ---------------------------------------------------------------------
