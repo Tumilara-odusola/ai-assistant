@@ -13,8 +13,21 @@ async function initDatabase() {
       duration_minutes INTEGER NOT NULL,
       service TEXT NOT NULL,
       customer_id TEXT NOT NULL,
-      created_at TIMESTAMP DEFAULT NOW()
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE (date, time)
     )
+  `);
+
+  // Migration for tables created before the UNIQUE constraint existed.
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'bookings_date_time_key'
+      ) THEN
+        ALTER TABLE bookings ADD CONSTRAINT bookings_date_time_key UNIQUE (date, time);
+      END IF;
+    END $$;
   `);
 }
 

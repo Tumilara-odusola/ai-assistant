@@ -63,11 +63,21 @@ async function confirmBooking(businessProfile, date, time, serviceName, customer
     throw new Error(`Unknown service: ${serviceName}`);
   }
 
-  await pool.query(
-    `INSERT INTO bookings (date, time, duration_minutes, service, customer_id)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [date, time, service.durationMinutes, serviceName, customerId]
-  );
+  try {
+    await pool.query(
+      `INSERT INTO bookings (date, time, duration_minutes, service, customer_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [date, time, service.durationMinutes, serviceName, customerId]
+    );
+  } catch (err) {
+    if (err.code === '23505') {
+      const slotTakenError = new Error('SLOT_ALREADY_BOOKED');
+      slotTakenError.code = 'SLOT_ALREADY_BOOKED';
+      throw slotTakenError;
+    }
+
+    throw err;
+  }
 
   return {
     date,

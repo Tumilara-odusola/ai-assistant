@@ -34,6 +34,15 @@ const BOOKING_CONFIRMED_REGEX =
 const BOOKING_SAVE_FAILURE_MESSAGE =
   "Sorry, something went wrong confirming that — can you try again in a moment?";
 
+const SLOT_ALREADY_BOOKED_MESSAGE =
+  "sorry, that slot just got taken, want to pick another time?";
+
+function messageForBookingError(err) {
+  return err.code === 'SLOT_ALREADY_BOOKED'
+    ? SLOT_ALREADY_BOOKED_MESSAGE
+    : BOOKING_SAVE_FAILURE_MESSAGE;
+}
+
 function extractBookingConfirmation(replyText) {
   const match = replyText.match(BOOKING_CONFIRMED_REGEX);
 
@@ -396,7 +405,7 @@ async function handleIncomingMessage(platform, senderId, text) {
       );
     } catch (err) {
       console.error('[BOOKING CONFIRMATION ERROR]', err);
-      reply = BOOKING_SAVE_FAILURE_MESSAGE;
+      reply = messageForBookingError(err);
     }
   }
 
@@ -699,7 +708,7 @@ app.post('/test-message', async (req, res) => {
         );
       } catch (err) {
         console.error('[BOOKING CONFIRMATION ERROR]', err);
-        result.reply = BOOKING_SAVE_FAILURE_MESSAGE;
+        result.reply = messageForBookingError(err);
       }
     }
 
