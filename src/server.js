@@ -8,7 +8,7 @@ const {
   computeTypingDelayMs
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
-const { pool, initDatabase } = require('./db');
+const { initDatabase } = require('./db');
 
 const app = express();
 app.use(express.json());
@@ -16,13 +16,6 @@ app.use(express.json());
 const businessProfile = JSON.parse(
   fs.readFileSync(
     path.join(__dirname, 'businessProfile.json'),
-    'utf8'
-  )
-);
-
-const bookings = JSON.parse(
-  fs.readFileSync(
-    path.join(__dirname, 'bookings.json'),
     'utf8'
   )
 );
@@ -361,8 +354,8 @@ async function handleIncomingMessage(platform, senderId, text) {
   const tomorrowDate = formatDateYYYYMMDD(tomorrow);
 
   const [todaySlots, tomorrowSlots] = await Promise.all([
-    computeAvailableSlots(businessProfile, bookings, todayDate),
-    computeAvailableSlots(businessProfile, bookings, tomorrowDate)
+    computeAvailableSlots(businessProfile, todayDate),
+    computeAvailableSlots(businessProfile, tomorrowDate)
   ]);
 
   const availableSlots = {
@@ -391,7 +384,6 @@ async function handleIncomingMessage(platform, senderId, text) {
     try {
       await confirmBooking(
         businessProfile,
-        bookings,
         booking.date,
         booking.time,
         booking.service,
@@ -669,8 +661,8 @@ app.post('/test-message', async (req, res) => {
     const tomorrowDate = formatDateYYYYMMDD(tomorrow);
 
     const [todaySlots, tomorrowSlots] = await Promise.all([
-      computeAvailableSlots(businessProfile, bookings, todayDate),
-      computeAvailableSlots(businessProfile, bookings, tomorrowDate)
+      computeAvailableSlots(businessProfile, todayDate),
+      computeAvailableSlots(businessProfile, tomorrowDate)
     ]);
 
     const availableSlots = {
@@ -695,7 +687,6 @@ app.post('/test-message', async (req, res) => {
       try {
         await confirmBooking(
           businessProfile,
-          bookings,
           booking.date,
           booking.time,
           booking.service,
@@ -765,37 +756,6 @@ app.get('/health', (req, res) => {
     status: 'online',
     service: 'AI assistant'
   });
-});
-
-// ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove once booking persistence is confirmed
-// ---------------------------------------------------------------------
-
-app.get('/debug-bookings', async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM bookings ORDER BY id');
-
-  res.json(rows);
-});
-
-app.get('/debug-env-check', (req, res) => {
-  const varNames = [
-    'DATABASE_URL',
-    'DATABASE_PUBLIC_URL',
-    'POSTGRES_URL',
-    'PGHOST',
-    'PGPORT',
-    'PGDATABASE',
-    'PGUSER',
-    'PGPASSWORD'
-  ];
-
-  const present = {};
-
-  for (const name of varNames) {
-    present[name] = Boolean(process.env[name]);
-  }
-
-  res.json(present);
 });
 
 // ---------------------------------------------------------------------

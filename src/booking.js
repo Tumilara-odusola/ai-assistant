@@ -13,9 +13,7 @@ function minutesToTimeString(totalMinutes) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
-// `bookings` is kept as a parameter for call-site compatibility but is
-// unused — availability is now read from the Postgres `bookings` table.
-async function computeAvailableSlots(businessProfile, bookings, dateString) {
+async function computeAvailableSlots(businessProfile, dateString) {
   const dayKey = DAY_KEYS[new Date(`${dateString}T00:00:00`).getDay()];
   const hoursRange = businessProfile.hours[dayKey];
 
@@ -58,9 +56,7 @@ async function computeAvailableSlots(businessProfile, bookings, dateString) {
   return slots;
 }
 
-// `bookings` is kept as a parameter for call-site compatibility but is
-// unused — the booking is now persisted to the Postgres `bookings` table.
-async function confirmBooking(businessProfile, bookings, date, time, serviceName, customerId) {
+async function confirmBooking(businessProfile, date, time, serviceName, customerId) {
   const service = businessProfile.services.find((s) => s.name === serviceName);
 
   if (!service) {
