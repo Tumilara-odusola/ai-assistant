@@ -8,7 +8,7 @@ const {
   computeTypingDelayMs
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
-const { initDatabase } = require('./db');
+const { pool, initDatabase } = require('./db');
 
 const app = express();
 app.use(express.json());
@@ -766,15 +766,10 @@ app.get('/health', (req, res) => {
 // TEMPORARY DEBUG ROUTE — remove once booking persistence is confirmed
 // ---------------------------------------------------------------------
 
-app.get('/debug-bookings', (req, res) => {
-  const currentBookings = JSON.parse(
-    fs.readFileSync(
-      path.join(__dirname, 'bookings.json'),
-      'utf8'
-    )
-  );
+app.get('/debug-bookings', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM bookings ORDER BY id');
 
-  res.json(currentBookings);
+  res.json(rows);
 });
 
 app.get('/debug-env-check', (req, res) => {
