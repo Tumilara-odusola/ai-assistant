@@ -3,6 +3,7 @@ require('dotenv').config({ override: true });
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const {
   generateReply,
   computeTypingDelayMs
@@ -771,7 +772,56 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-app.get('/dashboard', async (req, res) => {
+function timingSafePasswordEqual(a, b) {
+  const hashA = crypto.createHash('sha256').update(a).digest();
+  const hashB = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
+function requireDashboardAuth(req, res, next) {
+  const expectedUser = process.env.DASHBOARD_USER;
+  const expectedPassword = process.env.DASHBOARD_PASSWORD;
+
+  const sendAuthRequired = () => {
+    res.set('WWW-Authenticate', 'Basic realm="Dashboard"');
+    return res.sendStatus(401);
+  };
+
+  if (!expectedUser || !expectedPassword) {
+    console.error(
+      '[DASHBOARD AUTH] DASHBOARD_USER or DASHBOARD_PASSWORD not set'
+    );
+    return sendAuthRequired();
+  }
+
+  const authHeader = req.headers.authorization || '';
+  const [scheme, encoded] = authHeader.split(' ');
+
+  if (scheme !== 'Basic' || !encoded) {
+    return sendAuthRequired();
+  }
+
+  const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+  const separatorIndex = decoded.indexOf(':');
+
+  if (separatorIndex === -1) {
+    return sendAuthRequired();
+  }
+
+  const providedUser = decoded.slice(0, separatorIndex);
+  const providedPassword = decoded.slice(separatorIndex + 1);
+
+  if (
+    providedUser !== expectedUser ||
+    !timingSafePasswordEqual(providedPassword, expectedPassword)
+  ) {
+    return sendAuthRequired();
+  }
+
+  next();
+}
+
+app.get('/dashboard', requireDashboardAuth, async (req, res) => {
   const { rows } = await pool.query(
     'SELECT * FROM bookings ORDER BY date, time'
   );
