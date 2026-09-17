@@ -10,17 +10,28 @@ const {
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
 const { confirmOrder } = require('./orders');
-const { pool, initDatabase } = require('./db');
+const {
+  pool,
+  initDatabase,
+  getBusinessByWhatsAppPhoneId,
+  getBusinessByInstagramAccountId
+} = require('./db');
 
 const app = express();
 app.use(express.json());
 
+// Fallback business used only where there's no real webhook payload to look
+// up a business from — the /test-message endpoint and the (unimplemented)
+// TikTok path. Real WhatsApp/Instagram traffic is routed per-message to the
+// matching row in the `businesses` table instead of this module-level value.
 const businessProfile = JSON.parse(
   fs.readFileSync(
     path.join(__dirname, 'businessProfile.json'),
     'utf8'
   )
 );
+
+const FALLBACK_BUSINESS_ID = 1;
 
 function formatDateYYYYMMDD(date) {
   const year = date.getFullYear();
@@ -152,6 +163,22 @@ async function processMetaWebhook(body) {
         const value = change.value || {};
         const messages = value.messages || [];
 
+        if (messages.length === 0) {
+          continue;
+        }
+
+        const phoneNumberId = value.metadata?.phone_number_id;
+        const business = phoneNumberId
+          ? await getBusinessByWhatsAppPhoneId(phoneNumberId)
+          : null;
+
+        if (!business) {
+          console.error(
+            `[WHATSAPP] No business found for phone_number_id=${phoneNumberId}, skipping`
+          );
+          continue;
+        }
+
         for (const message of messages) {
           // Ignore sent, delivered, read, and failed status events.
           if (message.type !== 'text') {
@@ -178,7 +205,9 @@ async function processMetaWebhook(body) {
           await handleIncomingMessage(
             'whatsapp',
             senderId,
-            text
+            text,
+            business.business_profile,
+            business.id
           );
         }
       }
@@ -199,6 +228,23 @@ async function processMetaWebhook(body) {
 
   for (const entry of entries) {
     const changes = entry.changes || [];
+    const messaging = entry.messaging || [];
+
+    if (changes.length === 0 && messaging.length === 0) {
+      continue;
+    }
+
+    const accountId = entry.id;
+    const business = accountId
+      ? await getBusinessByInstagramAccountId(accountId)
+      : null;
+
+    if (!business) {
+      console.error(
+        `[INSTAGRAM] No business found for account id=${accountId}, skipping`
+      );
+      continue;
+    }
 
     for (const change of changes) {
       const value = change.value || {};
@@ -216,11 +262,11 @@ async function processMetaWebhook(body) {
       await handleIncomingMessage(
         'instagram',
         senderId,
-        text
+        text,
+        business.business_profile,
+        business.id
       );
     }
-
-    const messaging = entry.messaging || [];
 
     for (const event of messaging) {
       const senderId = event.sender?.id;
@@ -234,7 +280,9 @@ async function processMetaWebhook(body) {
         await handleIncomingMessage(
           'instagram',
           senderId,
-          text
+          text,
+          business.business_profile,
+          business.id
         );
 
         continue;
@@ -243,7 +291,7 @@ async function processMetaWebhook(body) {
       const mid = event.message_edit?.mid;
 
       if (mid) {
-        const resolved = await resolveInstagramMessageEdit(mid);
+        const resolved = await resolveInstagramMessageEdit(mid, accountId);
 
         if (resolved) {
           console.log(
@@ -253,7 +301,9 @@ async function processMetaWebhook(body) {
           await handleIncomingMessage(
             'instagram',
             resolved.senderId,
-            resolved.text
+            resolved.text,
+            business.business_profile,
+            business.id
           );
         }
       }
@@ -268,7 +318,7 @@ async function processMetaWebhook(body) {
 // recent conversation's latest message to recover sender/text.
 // ---------------------------------------------------------------------
 
-async function resolveInstagramMessageEdit(mid) {
+async function resolveInstagramMessageEdit(mid, accountId) {
   const token = process.env.META_INSTAGRAM_TOKEN;
 
   if (!token) {
@@ -279,7 +329,7 @@ async function resolveInstagramMessageEdit(mid) {
   }
 
   const url =
-    'https://graph.instagram.com/v21.0/17841434513621888/conversations' +
+    `https://graph.instagram.com/v21.0/${accountId}/conversations` +
     '?fields=messages{message,from,id,created_time}&limit=1';
 
   let response;
@@ -363,10 +413,14 @@ async function processTikTokWebhook(body) {
     `[INCOMING tiktok] ${senderId}: ${text}`
   );
 
+  // TikTok has no per-tenant lookup wired up yet — uses the fallback
+  // business, same as /test-message.
   await handleIncomingMessage(
     'tiktok',
     senderId,
-    text
+    text,
+    businessProfile,
+    FALLBACK_BUSINESS_ID
   );
 }
 
@@ -374,7 +428,7 @@ async function processTikTokWebhook(body) {
 // SHARED MESSAGE HANDLING
 // ---------------------------------------------------------------------
 
-async function handleIncomingMessage(platform, senderId, text) {
+async function handleIncomingMessage(platform, senderId, text, businessProfile, businessId) {
   const key = `${platform}:${senderId}`;
   const history = getHistory(key);
 
@@ -389,8 +443,8 @@ async function handleIncomingMessage(platform, senderId, text) {
   const tomorrowDate = formatDateYYYYMMDD(tomorrow);
 
   const [todaySlots, tomorrowSlots] = await Promise.all([
-    computeAvailableSlots(businessProfile, todayDate),
-    computeAvailableSlots(businessProfile, tomorrowDate)
+    computeAvailableSlots(businessProfile, businessId, todayDate),
+    computeAvailableSlots(businessProfile, businessId, tomorrowDate)
   ]);
 
   const availableSlots = {
@@ -420,6 +474,7 @@ async function handleIncomingMessage(platform, senderId, text) {
     try {
       await confirmBooking(
         businessProfile,
+        businessId,
         booking.date,
         booking.time,
         booking.service,
@@ -439,6 +494,7 @@ async function handleIncomingMessage(platform, senderId, text) {
     try {
       await confirmOrder(
         businessProfile,
+        businessId,
         order.product,
         order.quantity,
         key
@@ -715,8 +771,8 @@ app.post('/test-message', async (req, res) => {
     const tomorrowDate = formatDateYYYYMMDD(tomorrow);
 
     const [todaySlots, tomorrowSlots] = await Promise.all([
-      computeAvailableSlots(businessProfile, todayDate),
-      computeAvailableSlots(businessProfile, tomorrowDate)
+      computeAvailableSlots(businessProfile, FALLBACK_BUSINESS_ID, todayDate),
+      computeAvailableSlots(businessProfile, FALLBACK_BUSINESS_ID, tomorrowDate)
     ]);
 
     const availableSlots = {
@@ -742,6 +798,7 @@ app.post('/test-message', async (req, res) => {
       try {
         await confirmBooking(
           businessProfile,
+          FALLBACK_BUSINESS_ID,
           booking.date,
           booking.time,
           booking.service,
@@ -761,6 +818,7 @@ app.post('/test-message', async (req, res) => {
       try {
         await confirmOrder(
           businessProfile,
+          FALLBACK_BUSINESS_ID,
           order.product,
           order.quantity,
           key

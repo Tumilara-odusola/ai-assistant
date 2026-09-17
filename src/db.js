@@ -27,20 +27,9 @@ async function initDatabase() {
       service TEXT NOT NULL,
       customer_id TEXT NOT NULL,
       created_at TIMESTAMP DEFAULT NOW(),
-      UNIQUE (date, time)
+      business_id INTEGER REFERENCES businesses(id),
+      UNIQUE (business_id, date, time)
     )
-  `);
-
-  // Migration for tables created before the UNIQUE constraint existed.
-  await pool.query(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'bookings_date_time_key'
-      ) THEN
-        ALTER TABLE bookings ADD CONSTRAINT bookings_date_time_key UNIQUE (date, time);
-      END IF;
-    END $$;
   `);
 
   await pool.query(`
@@ -65,6 +54,28 @@ async function initDatabase() {
   await pool.query(`
     ALTER TABLE orders
     ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES businesses(id)
+  `);
+
+  // Migration: replace the old (date, time)-only uniqueness with
+  // (business_id, date, time) so two different businesses can hold the
+  // same date/time slot without colliding. Safe to rerun — drops the old
+  // constraint only if present, adds the new one only if missing.
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'bookings_date_time_key'
+      ) THEN
+        ALTER TABLE bookings DROP CONSTRAINT bookings_date_time_key;
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'bookings_business_id_date_time_key'
+      ) THEN
+        ALTER TABLE bookings
+        ADD CONSTRAINT bookings_business_id_date_time_key UNIQUE (business_id, date, time);
+      END IF;
+    END $$;
   `);
 }
 
@@ -147,4 +158,28 @@ async function migrateInitialBusiness() {
   };
 }
 
-module.exports = { pool, initDatabase, migrateInitialBusiness };
+async function getBusinessByWhatsAppPhoneId(phoneNumberId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM businesses WHERE whatsapp_phone_number_id = $1',
+    [phoneNumberId]
+  );
+
+  return rows[0] || null;
+}
+
+async function getBusinessByInstagramAccountId(accountId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM businesses WHERE instagram_account_id = $1',
+    [accountId]
+  );
+
+  return rows[0] || null;
+}
+
+module.exports = {
+  pool,
+  initDatabase,
+  migrateInitialBusiness,
+  getBusinessByWhatsAppPhoneId,
+  getBusinessByInstagramAccountId
+};

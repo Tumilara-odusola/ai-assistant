@@ -13,7 +13,7 @@ function minutesToTimeString(totalMinutes) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
-async function computeAvailableSlots(businessProfile, dateString) {
+async function computeAvailableSlots(businessProfile, businessId, dateString) {
   const dayKey = DAY_KEYS[new Date(`${dateString}T00:00:00`).getDay()];
   const hoursRange = businessProfile.hours[dayKey];
 
@@ -30,8 +30,8 @@ async function computeAvailableSlots(businessProfile, dateString) {
   );
 
   const { rows: dayBookings } = await pool.query(
-    'SELECT time, duration_minutes FROM bookings WHERE date = $1',
-    [dateString]
+    'SELECT time, duration_minutes FROM bookings WHERE date = $1 AND business_id = $2',
+    [dateString, businessId]
   );
 
   const isOccupied = (start, end) =>
@@ -56,7 +56,7 @@ async function computeAvailableSlots(businessProfile, dateString) {
   return slots;
 }
 
-async function confirmBooking(businessProfile, date, time, serviceName, customerId) {
+async function confirmBooking(businessProfile, businessId, date, time, serviceName, customerId) {
   const service = businessProfile.services.find((s) => s.name === serviceName);
 
   if (!service) {
@@ -65,9 +65,9 @@ async function confirmBooking(businessProfile, date, time, serviceName, customer
 
   try {
     await pool.query(
-      `INSERT INTO bookings (date, time, duration_minutes, service, customer_id)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [date, time, service.durationMinutes, serviceName, customerId]
+      `INSERT INTO bookings (date, time, duration_minutes, service, customer_id, business_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [date, time, service.durationMinutes, serviceName, customerId, businessId]
     );
   } catch (err) {
     if (err.code === '23505') {
@@ -84,7 +84,8 @@ async function confirmBooking(businessProfile, date, time, serviceName, customer
     time,
     durationMinutes: service.durationMinutes,
     service: serviceName,
-    customerId
+    customerId,
+    businessId
   };
 }
 

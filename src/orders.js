@@ -1,6 +1,6 @@
 const { pool } = require('./db');
 
-async function confirmOrder(businessProfile, productName, quantity, customerId) {
+async function confirmOrder(businessProfile, businessId, productName, quantity, customerId) {
   const product = businessProfile.products.find((p) => p.name === productName);
 
   if (!product) {
@@ -8,16 +8,17 @@ async function confirmOrder(businessProfile, productName, quantity, customerId) 
   }
 
   await pool.query(
-    `INSERT INTO orders (product_name, quantity, price, customer_id)
-     VALUES ($1, $2, $3, $4)`,
-    [productName, quantity, product.price, customerId]
+    `INSERT INTO orders (product_name, quantity, price, customer_id, business_id)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [productName, quantity, product.price, customerId, businessId]
   );
 
   return {
     productName,
     quantity,
     price: product.price,
-    customerId
+    customerId,
+    businessId
   };
 }
 
