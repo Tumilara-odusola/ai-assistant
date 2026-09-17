@@ -894,17 +894,27 @@ function requireDashboardAuth(req, res, next) {
 }
 
 app.get('/dashboard', requireDashboardAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    'SELECT * FROM bookings ORDER BY date, time'
-  );
+  const [{ rows: bookings }, { rows: orders }] = await Promise.all([
+    pool.query('SELECT * FROM bookings ORDER BY date, time'),
+    pool.query('SELECT * FROM orders ORDER BY created_at DESC')
+  ]);
 
-  const tableRows = rows.map((booking) => `
+  const bookingRows = bookings.map((booking) => `
     <tr>
       <td>${escapeHtml(booking.date)}</td>
       <td>${escapeHtml(booking.time)}</td>
       <td>${escapeHtml(booking.service)}</td>
       <td>${escapeHtml(booking.customer_id)}</td>
       <td>${escapeHtml(new Date(booking.created_at).toLocaleString())}</td>
+    </tr>`).join('');
+
+  const orderRows = orders.map((order) => `
+    <tr>
+      <td>${escapeHtml(order.product_name)}</td>
+      <td>${escapeHtml(order.quantity)}</td>
+      <td>${escapeHtml(order.price)}</td>
+      <td>${escapeHtml(order.customer_id)}</td>
+      <td>${escapeHtml(new Date(order.created_at).toLocaleString())}</td>
     </tr>`).join('');
 
   res.type('html').send(`<!DOCTYPE html>
@@ -922,7 +932,10 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
   }
   h1 {
     font-size: 20px;
-    margin-bottom: 20px;
+    margin: 0 0 20px;
+  }
+  section {
+    margin-bottom: 40px;
   }
   table {
     border-collapse: collapse;
@@ -951,14 +964,26 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
 </style>
 </head>
 <body>
+<section>
 <h1>Bookings</h1>
-${rows.length === 0 ? '<p class="empty">No bookings yet.</p>' : `<table>
+${bookings.length === 0 ? '<p class="empty">No bookings yet.</p>' : `<table>
   <thead>
     <tr><th>Date</th><th>Time</th><th>Service</th><th>Customer</th><th>Booked At</th></tr>
   </thead>
-  <tbody>${tableRows}
+  <tbody>${bookingRows}
   </tbody>
 </table>`}
+</section>
+<section>
+<h1>Orders</h1>
+${orders.length === 0 ? '<p class="empty">No orders yet.</p>' : `<table>
+  <thead>
+    <tr><th>Product</th><th>Quantity</th><th>Price</th><th>Customer</th><th>Ordered At</th></tr>
+  </thead>
+  <tbody>${orderRows}
+  </tbody>
+</table>`}
+</section>
 </body>
 </html>`);
 });
