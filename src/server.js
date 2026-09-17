@@ -10,7 +10,7 @@ const {
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
 const { confirmOrder } = require('./orders');
-const { pool, initDatabase } = require('./db');
+const { pool, initDatabase, migrateInitialBusiness } = require('./db');
 
 const app = express();
 app.use(express.json());
@@ -986,6 +986,16 @@ ${orders.length === 0 ? '<p class="empty">No orders yet.</p>' : `<table>
 </section>
 </body>
 </html>`);
+});
+
+// ---------------------------------------------------------------------
+// TEMPORARY ONE-TIME MIGRATION — remove after running once
+// ---------------------------------------------------------------------
+
+app.post('/debug-migrate-initial-business', async (req, res) => {
+  const result = await migrateInitialBusiness();
+
+  res.json(result);
 });
 
 // ---------------------------------------------------------------------
