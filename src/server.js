@@ -989,6 +989,23 @@ ${orders.length === 0 ? '<p class="empty">No orders yet.</p>' : `<table>
 });
 
 // ---------------------------------------------------------------------
+// TEMPORARY ONE-TIME CLEANUP — remove after running once
+// Deletes test data (customer_id 'test:local-user') from bookings/orders.
+// ---------------------------------------------------------------------
+
+app.post('/debug-cleanup-test-data', async (req, res) => {
+  const [bookingsResult, ordersResult] = await Promise.all([
+    pool.query('DELETE FROM bookings WHERE customer_id = $1', ['test:local-user']),
+    pool.query('DELETE FROM orders WHERE customer_id = $1', ['test:local-user'])
+  ]);
+
+  res.json({
+    bookingsDeleted: bookingsResult.rowCount,
+    ordersDeleted: ordersResult.rowCount
+  });
+});
+
+// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
