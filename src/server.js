@@ -964,16 +964,6 @@ ${rows.length === 0 ? '<p class="empty">No bookings yet.</p>' : `<table>
 });
 
 // ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove once order persistence is confirmed
-// ---------------------------------------------------------------------
-
-app.get('/debug-orders', async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM orders ORDER BY id');
-
-  res.json(rows);
-});
-
-// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
