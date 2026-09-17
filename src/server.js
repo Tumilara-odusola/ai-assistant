@@ -953,10 +953,22 @@ function requireDashboardAuth(req, res, next) {
 }
 
 app.get('/dashboard', requireDashboardAuth, async (req, res) => {
-  const [{ rows: bookings }, { rows: orders }] = await Promise.all([
-    pool.query('SELECT * FROM bookings ORDER BY date, time'),
-    pool.query('SELECT * FROM orders ORDER BY created_at DESC')
+  const parsedBusinessId = parseInt(req.query.businessId, 10);
+  const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
+
+  const [{ rows: businessRows }, { rows: bookings }, { rows: orders }] = await Promise.all([
+    pool.query('SELECT name FROM businesses WHERE id = $1', [businessId]),
+    pool.query(
+      'SELECT * FROM bookings WHERE business_id = $1 ORDER BY date, time',
+      [businessId]
+    ),
+    pool.query(
+      'SELECT * FROM orders WHERE business_id = $1 ORDER BY created_at DESC',
+      [businessId]
+    )
   ]);
+
+  const businessName = businessRows[0]?.name || `Business #${businessId} (not found)`;
 
   const bookingRows = bookings.map((booking) => `
     <tr>
@@ -980,7 +992,7 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Bookings Dashboard</title>
+<title>${escapeHtml(businessName)} Dashboard</title>
 <style>
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -990,8 +1002,12 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
     padding: 40px;
   }
   h1 {
-    font-size: 20px;
-    margin: 0 0 20px;
+    font-size: 22px;
+    margin: 0 0 24px;
+  }
+  h2 {
+    font-size: 18px;
+    margin: 0 0 16px;
   }
   section {
     margin-bottom: 40px;
@@ -1023,8 +1039,9 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
 </style>
 </head>
 <body>
+<h1>${escapeHtml(businessName)}</h1>
 <section>
-<h1>Bookings</h1>
+<h2>Bookings</h2>
 ${bookings.length === 0 ? '<p class="empty">No bookings yet.</p>' : `<table>
   <thead>
     <tr><th>Date</th><th>Time</th><th>Service</th><th>Customer</th><th>Booked At</th></tr>
@@ -1034,7 +1051,7 @@ ${bookings.length === 0 ? '<p class="empty">No bookings yet.</p>' : `<table>
 </table>`}
 </section>
 <section>
-<h1>Orders</h1>
+<h2>Orders</h2>
 ${orders.length === 0 ? '<p class="empty">No orders yet.</p>' : `<table>
   <thead>
     <tr><th>Product</th><th>Quantity</th><th>Price</th><th>Customer</th><th>Ordered At</th></tr>
