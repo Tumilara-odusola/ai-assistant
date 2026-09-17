@@ -176,10 +176,27 @@ async function getBusinessByInstagramAccountId(accountId) {
   return rows[0] || null;
 }
 
+async function createBusiness({ name, whatsappPhoneNumberId, instagramAccountId, businessProfile }) {
+  const { rows } = await pool.query(
+    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile)
+     VALUES ($1, $2, $3, $4)
+     RETURNING *`,
+    [
+      name,
+      whatsappPhoneNumberId || null,
+      instagramAccountId || null,
+      JSON.stringify(businessProfile)
+    ]
+  );
+
+  return rows[0];
+}
+
 module.exports = {
   pool,
   initDatabase,
   migrateInitialBusiness,
   getBusinessByWhatsAppPhoneId,
-  getBusinessByInstagramAccountId
+  getBusinessByInstagramAccountId,
+  createBusiness
 };

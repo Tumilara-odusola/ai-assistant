@@ -14,7 +14,8 @@ const {
   pool,
   initDatabase,
   getBusinessByWhatsAppPhoneId,
-  getBusinessByInstagramAccountId
+  getBusinessByInstagramAccountId,
+  createBusiness
 } = require('./db');
 
 const app = express();
@@ -1044,6 +1045,76 @@ ${orders.length === 0 ? '<p class="empty">No orders yet.</p>' : `<table>
 </section>
 </body>
 </html>`);
+});
+
+// ---------------------------------------------------------------------
+// BUSINESS ONBOARDING (ADMIN)
+// ---------------------------------------------------------------------
+
+function validateNewBusinessPayload(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return ['Request body must be a JSON object'];
+  }
+
+  if (!body.name || typeof body.name !== 'string') {
+    errors.push('name is required and must be a string');
+  }
+
+  const businessProfile = body.businessProfile;
+
+  if (!businessProfile || typeof businessProfile !== 'object') {
+    errors.push('businessProfile is required and must be an object');
+    return errors;
+  }
+
+  if (!businessProfile.businessName || typeof businessProfile.businessName !== 'string') {
+    errors.push('businessProfile.businessName is required and must be a string');
+  }
+
+  if (!businessProfile.hours || typeof businessProfile.hours !== 'object') {
+    errors.push('businessProfile.hours is required and must be an object');
+  }
+
+  const hasServices = Array.isArray(businessProfile.services) && businessProfile.services.length > 0;
+  const hasProducts = Array.isArray(businessProfile.products) && businessProfile.products.length > 0;
+
+  if (!hasServices && !hasProducts) {
+    errors.push('businessProfile must include a non-empty services array or products array');
+  }
+
+  return errors;
+}
+
+app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
+  const errors = validateNewBusinessPayload(req.body);
+
+  if (errors.length > 0) {
+    return res.status(400).json({ errors });
+  }
+
+  const { name, whatsappPhoneNumberId, instagramAccountId, businessProfile } = req.body;
+
+  try {
+    const business = await createBusiness({
+      name,
+      whatsappPhoneNumberId,
+      instagramAccountId,
+      businessProfile
+    });
+
+    return res.status(201).json(business);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({
+        error: 'A business with that WhatsApp phone number ID or Instagram account ID already exists'
+      });
+    }
+
+    console.error('[CREATE BUSINESS ERROR]', err);
+    return res.status(500).json({ error: 'Failed to create business' });
+  }
 });
 
 // ---------------------------------------------------------------------
