@@ -9,6 +9,7 @@ const {
   computeTypingDelayMs
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
+const { confirmOrder } = require('./orders');
 const { pool, initDatabase } = require('./db');
 
 const app = express();
@@ -58,6 +59,30 @@ function extractBookingConfirmation(replyText) {
       date: date.trim(),
       time: time.trim(),
       service: service.trim()
+    }
+  };
+}
+
+const ORDER_CONFIRMED_REGEX =
+  /\n?\[ORDER_CONFIRMED:\s*product=([^,]+),\s*quantity=([^\]]+)\]\s*$/;
+
+const ORDER_SAVE_FAILURE_MESSAGE =
+  "Sorry, something went wrong placing that order — can you try again in a moment?";
+
+function extractOrderConfirmation(replyText) {
+  const match = replyText.match(ORDER_CONFIRMED_REGEX);
+
+  if (!match) {
+    return { cleanReply: replyText, order: null };
+  }
+
+  const [, product, quantity] = match;
+
+  return {
+    cleanReply: replyText.slice(0, match.index).trimEnd(),
+    order: {
+      product: product.trim(),
+      quantity: parseInt(quantity.trim(), 10)
     }
   };
 }
@@ -386,7 +411,8 @@ async function handleIncomingMessage(platform, senderId, text) {
 
   console.log(`[GENERATED REPLY] ${result.reply}`);
 
-  const { cleanReply, booking } = extractBookingConfirmation(result.reply);
+  const { cleanReply: replyAfterBooking, booking } = extractBookingConfirmation(result.reply);
+  const { cleanReply, order } = extractOrderConfirmation(replyAfterBooking);
 
   let reply = cleanReply;
 
@@ -406,6 +432,24 @@ async function handleIncomingMessage(platform, senderId, text) {
     } catch (err) {
       console.error('[BOOKING CONFIRMATION ERROR]', err);
       reply = messageForBookingError(err);
+    }
+  }
+
+  if (order) {
+    try {
+      await confirmOrder(
+        businessProfile,
+        order.product,
+        order.quantity,
+        key
+      );
+
+      console.log(
+        `[ORDER CONFIRMED] ${key}: ${order.quantity}x ${order.product}`
+      );
+    } catch (err) {
+      console.error('[ORDER CONFIRMATION ERROR]', err);
+      reply = ORDER_SAVE_FAILURE_MESSAGE;
     }
   }
 
@@ -689,7 +733,8 @@ app.post('/test-message', async (req, res) => {
       availableSlots
     );
 
-    const { cleanReply, booking } = extractBookingConfirmation(result.reply);
+    const { cleanReply: replyAfterBooking, booking } = extractBookingConfirmation(result.reply);
+    const { cleanReply, order } = extractOrderConfirmation(replyAfterBooking);
 
     result.reply = cleanReply;
 
@@ -709,6 +754,24 @@ app.post('/test-message', async (req, res) => {
       } catch (err) {
         console.error('[BOOKING CONFIRMATION ERROR]', err);
         result.reply = messageForBookingError(err);
+      }
+    }
+
+    if (order) {
+      try {
+        await confirmOrder(
+          businessProfile,
+          order.product,
+          order.quantity,
+          key
+        );
+
+        console.log(
+          `[ORDER CONFIRMED] ${key}: ${order.quantity}x ${order.product}`
+        );
+      } catch (err) {
+        console.error('[ORDER CONFIRMATION ERROR]', err);
+        result.reply = ORDER_SAVE_FAILURE_MESSAGE;
       }
     }
 
@@ -898,6 +961,16 @@ ${rows.length === 0 ? '<p class="empty">No bookings yet.</p>' : `<table>
 </table>`}
 </body>
 </html>`);
+});
+
+// ---------------------------------------------------------------------
+// TEMPORARY DEBUG ROUTE — remove once order persistence is confirmed
+// ---------------------------------------------------------------------
+
+app.get('/debug-orders', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM orders ORDER BY id');
+
+  res.json(rows);
 });
 
 // ---------------------------------------------------------------------

@@ -7,7 +7,7 @@ function formatSlotList(slots) {
 }
 
 function buildSystemPrompt(businessProfile, availableSlots) {
-  const { businessName, voice, hours, services, escalateIfCustomerMentions } = businessProfile;
+  const { businessName, voice, hours, services, products = [], escalateIfCustomerMentions } = businessProfile;
 
   return `You are replying to customer messages on behalf of ${businessName}, a real small business.
 
@@ -22,6 +22,7 @@ ${voice.sampleReplies.map(r => `  - "${r}"`).join('\n')}
 BUSINESS INFO:
 - Hours: ${JSON.stringify(hours)}
 - Services offered: ${services.map(s => `${s.name} ($${s.price}, ${s.durationMinutes} min)`).join('; ')}
+- Products for sale: ${products.length > 0 ? products.map(p => `${p.name} ($${p.price}) — ${p.description}`).join('; ') : 'none'}
 
 AVAILABLE SLOTS:
 - Today is ${availableSlots.todayDate}. Today's available slots: ${formatSlotList(availableSlots.today)}
@@ -35,7 +36,9 @@ RULES:
 - Never say you are an AI unless directly and explicitly asked.
 - When the customer clearly confirms a specific time AND service (e.g. "yeah 2:30 works" after being offered it), end your reply with a hidden marker line on its own new line, in exactly this format: [BOOKING_CONFIRMED: date=YYYY-MM-DD, time=HH:MM, service=<service name>] — using the real date (from "Today is"/"Tomorrow is" above), the confirmed time, and the exact service name. This marker is never shown to the customer, so do not mention it or refer to it in the customer-facing part of the reply.
 - If no booking is being confirmed, do not include the marker line at all.
-- Output ONLY the reply text (plus the marker line when a booking is confirmed). No preamble, no explanation, no quotation marks around it.`;
+- When the customer clearly confirms they want to buy a specific product and quantity (e.g. "yeah I'll take 2 of the vitamin C serum"), end your reply with a hidden marker line on its own new line, in exactly this format: [ORDER_CONFIRMED: product=<product name>, quantity=<number>] — using the exact product name from "Products for sale" above and the confirmed quantity. This marker is never shown to the customer, so do not mention it or refer to it in the customer-facing part of the reply.
+- If no order is being confirmed, do not include the marker line at all.
+- Output ONLY the reply text (plus the marker line(s) when a booking and/or order is confirmed). No preamble, no explanation, no quotation marks around it.`;
 }
 
 async function callAnthropic(systemPrompt, conversationHistory, incomingMessage) {

@@ -29,6 +29,17 @@ async function initDatabase() {
       END IF;
     END $$;
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id SERIAL PRIMARY KEY,
+      product_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      price NUMERIC NOT NULL,
+      customer_id TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
 }
 
 module.exports = { pool, initDatabase };
