@@ -15,7 +15,7 @@ async function confirmOrder(businessProfile, businessId, productName, quantity, 
   // WhatsApp/Instagram customers are identified by phone number or IGSID,
   // not email, but Paystack requires one. Synthesizing a placeholder until
   // there's a real way to collect the customer's actual email.
-  const placeholderEmail = `${customerId.replace(/[^a-zA-Z0-9]/g, '_')}@customer.placeholder`;
+  const placeholderEmail = `${customerId.replace(/[^a-zA-Z0-9]/g, '_')}@customer.example.com`;
 
   const { authorizationUrl } = await initializePayment(
     placeholderEmail,

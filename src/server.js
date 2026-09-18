@@ -10,7 +10,6 @@ const {
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
 const { confirmOrder } = require('./orders');
-const { initializePayment } = require('./paystack');
 const {
   pool,
   initDatabase,
@@ -1140,48 +1139,6 @@ app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
 
     console.error('[CREATE BUSINESS ERROR]', err);
     return res.status(500).json({ error: 'Failed to create business' });
-  }
-});
-
-// ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove once PAYSTACK_SECRET_KEY is confirmed
-// ---------------------------------------------------------------------
-
-app.get('/debug-paystack-env-check', (req, res) => {
-  res.json({
-    PAYSTACK_SECRET_KEY: Boolean(process.env.PAYSTACK_SECRET_KEY)
-  });
-});
-
-app.get('/debug-paystack-test', async (req, res) => {
-  try {
-    const result = await initializePayment(
-      'test@example.com',
-      1000,
-      'NGN',
-      `debug_test_${Date.now()}`,
-      {}
-    );
-
-    res.json({ success: true, result });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
-});
-
-app.get('/debug-confirm-order-test', async (req, res) => {
-  try {
-    const result = await confirmOrder(
-      businessProfile,
-      1,
-      'Face Wash',
-      1,
-      'debug_test'
-    );
-
-    res.json({ success: true, result });
-  } catch (err) {
-    res.json({ success: false, error: err.message, stack: err.stack });
   }
 });
 
