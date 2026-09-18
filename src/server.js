@@ -1143,6 +1143,16 @@ app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
+// TEMPORARY DEBUG ROUTE — remove once PAYSTACK_SECRET_KEY is confirmed
+// ---------------------------------------------------------------------
+
+app.get('/debug-paystack-env-check', (req, res) => {
+  res.json({
+    PAYSTACK_SECRET_KEY: Boolean(process.env.PAYSTACK_SECRET_KEY)
+  });
+});
+
+// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
