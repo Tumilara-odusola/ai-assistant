@@ -1169,6 +1169,22 @@ app.get('/debug-paystack-test', async (req, res) => {
   }
 });
 
+app.get('/debug-confirm-order-test', async (req, res) => {
+  try {
+    const result = await confirmOrder(
+      businessProfile,
+      1,
+      'Face Wash',
+      1,
+      'debug_test'
+    );
+
+    res.json({ success: true, result });
+  } catch (err) {
+    res.json({ success: false, error: err.message, stack: err.stack });
+  }
+});
+
 // ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
