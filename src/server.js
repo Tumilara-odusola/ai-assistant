@@ -10,6 +10,7 @@ const {
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
 const { confirmOrder } = require('./orders');
+const { initializePayment } = require('./paystack');
 const {
   pool,
   initDatabase,
@@ -1150,6 +1151,22 @@ app.get('/debug-paystack-env-check', (req, res) => {
   res.json({
     PAYSTACK_SECRET_KEY: Boolean(process.env.PAYSTACK_SECRET_KEY)
   });
+});
+
+app.get('/debug-paystack-test', async (req, res) => {
+  try {
+    const result = await initializePayment(
+      'test@example.com',
+      1000,
+      'NGN',
+      `debug_test_${Date.now()}`,
+      {}
+    );
+
+    res.json({ success: true, result });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
 });
 
 // ---------------------------------------------------------------------
