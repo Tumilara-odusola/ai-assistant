@@ -39,7 +39,9 @@ async function initDatabase() {
       quantity INTEGER NOT NULL,
       price NUMERIC NOT NULL,
       customer_id TEXT NOT NULL,
-      created_at TIMESTAMP DEFAULT NOW()
+      created_at TIMESTAMP DEFAULT NOW(),
+      payment_status TEXT DEFAULT 'pending',
+      payment_reference TEXT UNIQUE
     )
   `);
 
@@ -54,6 +56,19 @@ async function initDatabase() {
   await pool.query(`
     ALTER TABLE orders
     ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES businesses(id)
+  `);
+
+  // Payment tracking columns for the Paystack integration. Added via
+  // ADD COLUMN IF NOT EXISTS so this is safe to rerun against the
+  // existing orders table.
+  await pool.query(`
+    ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'pending'
+  `);
+
+  await pool.query(`
+    ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS payment_reference TEXT UNIQUE
   `);
 
   // Migration: replace the old (date, time)-only uniqueness with

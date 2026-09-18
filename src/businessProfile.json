@@ -2,6 +2,7 @@
   "businessName": "Example Barbershop",
   "industry": "salon",
   "transactionType": "booking",
+  "currency": "NGN",
   "voice": {
     "tone": "casual and warm, like texting a friend who happens to run the shop",
     "useEmoji": true,

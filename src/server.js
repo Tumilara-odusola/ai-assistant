@@ -81,6 +81,10 @@ const ORDER_CONFIRMED_REGEX =
 const ORDER_SAVE_FAILURE_MESSAGE =
   "Sorry, something went wrong placing that order — can you try again in a moment?";
 
+function paymentLinkMessage(authorizationUrl) {
+  return `Almost there! Complete your payment here: ${authorizationUrl}`;
+}
+
 function extractOrderConfirmation(replyText) {
   const match = replyText.match(ORDER_CONFIRMED_REGEX);
 
@@ -493,7 +497,7 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
 
   if (order) {
     try {
-      await confirmOrder(
+      const { authorizationUrl } = await confirmOrder(
         businessProfile,
         businessId,
         order.product,
@@ -502,8 +506,10 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
       );
 
       console.log(
-        `[ORDER CONFIRMED] ${key}: ${order.quantity}x ${order.product}`
+        `[ORDER CONFIRMED] ${key}: ${order.quantity}x ${order.product}, payment link generated`
       );
+
+      reply = paymentLinkMessage(authorizationUrl);
     } catch (err) {
       console.error('[ORDER CONFIRMATION ERROR]', err);
       reply = ORDER_SAVE_FAILURE_MESSAGE;
@@ -817,7 +823,7 @@ app.post('/test-message', async (req, res) => {
 
     if (order) {
       try {
-        await confirmOrder(
+        const { authorizationUrl } = await confirmOrder(
           businessProfile,
           FALLBACK_BUSINESS_ID,
           order.product,
@@ -826,8 +832,10 @@ app.post('/test-message', async (req, res) => {
         );
 
         console.log(
-          `[ORDER CONFIRMED] ${key}: ${order.quantity}x ${order.product}`
+          `[ORDER CONFIRMED] ${key}: ${order.quantity}x ${order.product}, payment link generated`
         );
+
+        result.reply = paymentLinkMessage(authorizationUrl);
       } catch (err) {
         console.error('[ORDER CONFIRMATION ERROR]', err);
         result.reply = ORDER_SAVE_FAILURE_MESSAGE;
