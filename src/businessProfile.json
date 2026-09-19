@@ -35,9 +35,9 @@
     { "name": "Beard trim", "price": 15, "durationMinutes": 15 }
   ],
   "products": [
-    { "name": "Face Wash", "price": 18, "description": "Gentle daily cleanser for all skin types" },
-    { "name": "Vitamin C Serum", "price": 45, "description": "Brightening serum for dark spots and dullness" },
-    { "name": "Moisturizer", "price": 32, "description": "Lightweight daily moisturizer with SPF 30" }
+    { "name": "Face Wash", "price": 5000, "description": "Gentle daily cleanser for all skin types" },
+    { "name": "Vitamin C Serum", "price": 12000, "description": "Brightening serum for dark spots and dullness" },
+    { "name": "Moisturizer", "price": 8000, "description": "Lightweight daily moisturizer with SPF 30" }
   ],
   "escalateIfCustomerMentions": [
     "refund",
