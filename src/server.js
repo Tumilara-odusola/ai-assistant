@@ -1746,26 +1746,6 @@ app.post('/onboard', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove after the token encryption pre-flight check
-// ---------------------------------------------------------------------
-
-app.get('/debug-token-preflight', requireDashboardAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    `SELECT
-       id,
-       name,
-       whatsapp_token IS NOT NULL AS has_whatsapp_token,
-       LENGTH(whatsapp_token) AS whatsapp_token_length,
-       instagram_token IS NOT NULL AS has_instagram_token,
-       LENGTH(instagram_token) AS instagram_token_length
-     FROM businesses
-     ORDER BY id`
-  );
-
-  res.json(rows);
-});
-
-// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 

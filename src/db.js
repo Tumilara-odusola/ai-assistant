@@ -7,6 +7,77 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
 
+// Loaded and validated once at module load time so a missing/malformed
+// ENCRYPTION_KEY crashes the process immediately on boot (this throw is
+// synchronous, during `require('./db')`, before Express or the DB pool
+// ever get used) rather than failing silently the first time a token is
+// read or written.
+function loadEncryptionKey() {
+  const keyBase64 = process.env.ENCRYPTION_KEY;
+
+  if (!keyBase64) {
+    throw new Error('ENCRYPTION_KEY environment variable is not set');
+  }
+
+  const key = Buffer.from(keyBase64, 'base64');
+
+  if (key.length !== 32) {
+    throw new Error(
+      `ENCRYPTION_KEY must decode to exactly 32 bytes (got ${key.length}) — ` +
+      'expected a base64-encoded 32-byte key, e.g. from ' +
+      `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
+    );
+  }
+
+  return key;
+}
+
+const ENCRYPTION_KEY = loadEncryptionKey();
+
+function encryptToken(plaintext) {
+  if (plaintext === null || plaintext === undefined) {
+    return null;
+  }
+
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  return Buffer.concat([iv, authTag, encrypted]).toString('base64');
+}
+
+function decryptToken(ciphertext) {
+  if (ciphertext === null || ciphertext === undefined) {
+    return null;
+  }
+
+  const combined = Buffer.from(ciphertext, 'base64');
+  const iv = combined.subarray(0, 12);
+  const authTag = combined.subarray(12, 28);
+  const encrypted = combined.subarray(28);
+
+  const decipher = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(authTag);
+
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+}
+
+// Every function that SELECTs a business row runs it through this before
+// returning, so decryption happens in exactly one place and can't be
+// forgotten by a future lookup function.
+function decryptBusinessRow(row) {
+  if (!row) {
+    return row;
+  }
+
+  return {
+    ...row,
+    whatsapp_token: decryptToken(row.whatsapp_token),
+    instagram_token: decryptToken(row.instagram_token)
+  };
+}
+
 async function initDatabase() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS businesses (
@@ -232,7 +303,7 @@ async function getBusinessByWhatsAppPhoneId(phoneNumberId) {
     [phoneNumberId]
   );
 
-  return rows[0] || null;
+  return decryptBusinessRow(rows[0]) || null;
 }
 
 async function getBusinessByInstagramAccountId(accountId) {
@@ -241,7 +312,7 @@ async function getBusinessByInstagramAccountId(accountId) {
     [accountId]
   );
 
-  return rows[0] || null;
+  return decryptBusinessRow(rows[0]) || null;
 }
 
 async function createBusiness({
@@ -264,12 +335,12 @@ async function createBusiness({
       instagramAccountId || null,
       JSON.stringify(businessProfile),
       dashboardToken,
-      whatsappToken || null,
-      instagramToken || null
+      encryptToken(whatsappToken || null),
+      encryptToken(instagramToken || null)
     ]
   );
 
-  return rows[0];
+  return decryptBusinessRow(rows[0]);
 }
 
 async function getBusinessByDashboardToken(token) {
@@ -278,7 +349,7 @@ async function getBusinessByDashboardToken(token) {
     [token]
   );
 
-  return rows[0] || null;
+  return decryptBusinessRow(rows[0]) || null;
 }
 
 async function getBusinessById(id) {
@@ -287,7 +358,7 @@ async function getBusinessById(id) {
     [id]
   );
 
-  return rows[0] || null;
+  return decryptBusinessRow(rows[0]) || null;
 }
 
 module.exports = {
