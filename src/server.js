@@ -1090,9 +1090,9 @@ function requireDashboardAuth(req, res, next) {
   next();
 }
 
-async function renderBookingsOrdersPage(businessId) {
+async function fetchDashboardData(businessId) {
   const [{ rows: businessRows }, { rows: bookings }, { rows: orders }] = await Promise.all([
-    pool.query('SELECT name FROM businesses WHERE id = $1', [businessId]),
+    pool.query('SELECT name, business_profile FROM businesses WHERE id = $1', [businessId]),
     pool.query(
       'SELECT * FROM bookings WHERE business_id = $1 ORDER BY date, time',
       [businessId]
@@ -1103,7 +1103,18 @@ async function renderBookingsOrdersPage(businessId) {
     )
   ]);
 
-  const businessName = businessRows[0]?.name || `Business #${businessId} (not found)`;
+  const business = businessRows[0] || null;
+
+  return {
+    businessName: business?.name || `Business #${businessId} (not found)`,
+    businessProfile: business?.business_profile || null,
+    bookings,
+    orders
+  };
+}
+
+async function renderBookingsOrdersPage(businessId) {
+  const { businessName, bookings, orders } = await fetchDashboardData(businessId);
 
   const bookingRows = bookings.map((booking) => `
     <tr>
@@ -1204,6 +1215,262 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
   const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
 
   res.type('html').send(await renderBookingsOrdersPage(businessId));
+});
+
+// ---------------------------------------------------------------------
+// TEMPORARY — dashboard visual redesign preview, no auth, for review only
+// ---------------------------------------------------------------------
+
+function getServicePrice(businessProfile, serviceName) {
+  const service = businessProfile?.services?.find((s) => s.name === serviceName);
+  return service ? Number(service.price) : 0;
+}
+
+function formatMoney(amount, currencyCode) {
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currencyCode || 'NGN',
+      currencyDisplay: 'narrowSymbol'
+    }).format(amount);
+  } catch {
+    return `${amount}`;
+  }
+}
+
+function computeTodaySummary(businessProfile, bookings, orders, todayDate) {
+  const todaysBookings = bookings.filter((b) => b.date === todayDate);
+
+  const bookingRevenue = todaysBookings.reduce(
+    (sum, b) => sum + getServicePrice(businessProfile, b.service),
+    0
+  );
+
+  const todaysOrders = orders.filter(
+    (o) => formatDateYYYYMMDD(new Date(o.created_at)) === todayDate
+  );
+
+  const orderRevenue = todaysOrders.reduce(
+    (sum, o) => sum + Number(o.price) * o.quantity,
+    0
+  );
+
+  return {
+    bookingsCount: todaysBookings.length,
+    revenue: bookingRevenue + orderRevenue
+  };
+}
+
+function buildActivityRows(businessProfile, bookings, orders) {
+  const bookingRows = bookings.map((b) => ({
+    type: 'booking',
+    timestamp: new Date(`${b.date}T${b.time}:00`),
+    title: b.service,
+    customer: b.customer_id,
+    amount: getServicePrice(businessProfile, b.service),
+    status: null,
+    dateLabel: `${b.date} · ${b.time}`
+  }));
+
+  const orderRows = orders.map((o) => ({
+    type: 'order',
+    timestamp: new Date(o.created_at),
+    title: `${o.quantity}× ${o.product_name}`,
+    customer: o.customer_id,
+    amount: Number(o.price) * o.quantity,
+    status: o.payment_status,
+    dateLabel: new Date(o.created_at).toLocaleString()
+  }));
+
+  return [...bookingRows, ...orderRows].sort((a, b) => b.timestamp - a.timestamp);
+}
+
+app.get('/dashboard-preview', async (req, res) => {
+  const parsedBusinessId = parseInt(req.query.businessId, 10);
+  const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
+
+  const { businessName, businessProfile, bookings, orders } =
+    await fetchDashboardData(businessId);
+
+  const currency = businessProfile?.currency || 'NGN';
+  const todayDate = formatDateYYYYMMDD(new Date());
+  const summary = computeTodaySummary(businessProfile, bookings, orders, todayDate);
+  const activity = buildActivityRows(businessProfile, bookings, orders);
+
+  const activityHtml = activity.map((row) => `
+    <div class="row">
+      <div class="row-main">
+        <div class="row-date">${escapeHtml(row.dateLabel)}</div>
+        <div class="row-title">${escapeHtml(row.title)}</div>
+        <div class="row-customer">${escapeHtml(row.customer)}</div>
+      </div>
+      <div class="row-side">
+        <div class="row-amount">${formatMoney(row.amount, currency)}</div>
+        ${row.status ? `<div class="status status-${escapeHtml(row.status)}">${escapeHtml(row.status)}</div>` : ''}
+      </div>
+    </div>`).join('');
+
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(businessName)} — Dashboard Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+    --accent: #D4A257;
+    --alert: #8B3A3A;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 32px 20px 80px;
+  }
+  .page {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 6px;
+  }
+  h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(22px, 5vw, 28px);
+    font-weight: 700;
+    margin: 0 0 28px;
+  }
+  .hero {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+    padding-bottom: 24px;
+    margin-bottom: 24px;
+    border-bottom: 2px solid var(--text);
+  }
+  .stat-label {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 4px;
+  }
+  .stat-value {
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(28px, 8vw, 36px);
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .stat-value.revenue {
+    color: var(--accent);
+  }
+  .section-label {
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px 0;
+    border-bottom: 1px solid rgba(26, 46, 43, 0.14);
+  }
+  .row:first-of-type {
+    padding-top: 0;
+  }
+  .row-date {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+  .row-title {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .row-customer {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .row-side {
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .row-amount {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .status {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .status-paid {
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  .status-pending {
+    color: var(--alert);
+    border: 1px solid var(--alert);
+  }
+  .empty {
+    color: var(--muted);
+    padding: 24px 0;
+    font-size: 14px;
+  }
+  @media (min-width: 700px) {
+    body {
+      padding: 56px 20px 100px;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="eyebrow">Today</p>
+  <h1>${escapeHtml(businessName)}</h1>
+
+  <div class="hero">
+    <div>
+      <p class="stat-label">Bookings Today</p>
+      <p class="stat-value">${summary.bookingsCount}</p>
+    </div>
+    <div>
+      <p class="stat-label">Revenue Today</p>
+      <p class="stat-value revenue">${formatMoney(summary.revenue, currency)}</p>
+    </div>
+  </div>
+
+  <p class="section-label">Activity</p>
+  ${activity.length === 0 ? '<p class="empty">Nothing booked or ordered yet.</p>' : activityHtml}
+</div>
+</body>
+</html>`);
 });
 
 app.get('/my-dashboard/:token', async (req, res) => {
