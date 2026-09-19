@@ -89,7 +89,8 @@ async function initDatabase() {
       created_at TIMESTAMP DEFAULT NOW(),
       dashboard_token TEXT UNIQUE,
       whatsapp_token TEXT,
-      instagram_token TEXT
+      instagram_token TEXT,
+      twilio_phone_number TEXT UNIQUE
     )
   `);
 
@@ -190,6 +191,16 @@ async function initDatabase() {
   await pool.query(`
     ALTER TABLE businesses
     ADD COLUMN IF NOT EXISTS instagram_token TEXT
+  `);
+
+  // The Twilio phone number (E.164, e.g. "+15551234567") that routes voice
+  // calls to this business — a real phone number, not an opaque
+  // platform-assigned ID like whatsapp_phone_number_id, and a distinct
+  // value even for a business that "shares" a number across channels
+  // conceptually, since Twilio and Meta assign these independently.
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS twilio_phone_number TEXT UNIQUE
   `);
 }
 
@@ -315,6 +326,15 @@ async function getBusinessByInstagramAccountId(accountId) {
   return decryptBusinessRow(rows[0]) || null;
 }
 
+async function getBusinessByTwilioPhoneNumber(phoneNumber) {
+  const { rows } = await pool.query(
+    'SELECT * FROM businesses WHERE twilio_phone_number = $1',
+    [phoneNumber]
+  );
+
+  return decryptBusinessRow(rows[0]) || null;
+}
+
 async function createBusiness({
   name,
   whatsappPhoneNumberId,
@@ -369,5 +389,6 @@ module.exports = {
   getBusinessByInstagramAccountId,
   getBusinessByDashboardToken,
   getBusinessById,
+  getBusinessByTwilioPhoneNumber,
   createBusiness
 };
