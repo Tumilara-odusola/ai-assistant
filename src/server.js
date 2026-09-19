@@ -1696,19 +1696,6 @@ app.post('/onboard', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove after checking business dashboard_token
-// ---------------------------------------------------------------------
-
-app.get('/debug-business/:id', requireDashboardAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    'SELECT id, name, dashboard_token FROM businesses WHERE id = $1',
-    [req.params.id]
-  );
-
-  res.json(rows[0] || null);
-});
-
-// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
