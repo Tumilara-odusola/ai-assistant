@@ -17,6 +17,7 @@ const {
   getBusinessByWhatsAppPhoneId,
   getBusinessByInstagramAccountId,
   getBusinessByDashboardToken,
+  getBusinessById,
   createBusiness
 } = require('./db');
 
@@ -618,7 +619,8 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
       await sendMessage(
         platform,
         senderId,
-        reply
+        reply,
+        businessId
       );
     } catch (err) {
       console.error(
@@ -633,22 +635,68 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
 // SEND MESSAGE
 // ---------------------------------------------------------------------
 
-async function sendMessage(platform, recipientId, text) {
+// Looks up business_id's own WhatsApp credentials. business_id=1 (this
+// deployment's original business) falls back to process.env when its own
+// columns are unset, so the original setup keeps working unchanged. Every
+// other business must supply its own — no silent fallback to the shared
+// env credentials, since that would send on their behalf from our account.
+async function resolveWhatsAppCredentials(businessId) {
+  const business = await getBusinessById(businessId);
+
+  let phoneNumberId = business?.whatsapp_phone_number_id;
+  let token = business?.whatsapp_token;
+
+  if (businessId === FALLBACK_BUSINESS_ID) {
+    phoneNumberId = phoneNumberId || process.env.META_WHATSAPP_PHONE_NUMBER_ID;
+    token = token || process.env.META_WHATSAPP_TEST_TOKEN;
+  }
+
+  if (!phoneNumberId || !token) {
+    throw new Error(`Missing WhatsApp credentials for business ${businessId}`);
+  }
+
+  return { phoneNumberId, token };
+}
+
+async function resolveInstagramToken(businessId) {
+  const business = await getBusinessById(businessId);
+
+  let token = business?.instagram_token;
+
+  if (businessId === FALLBACK_BUSINESS_ID) {
+    token = token || process.env.META_INSTAGRAM_TOKEN || process.env.META_WHATSAPP_TEST_TOKEN;
+  }
+
+  if (!token) {
+    throw new Error(`Missing Instagram token for business ${businessId}`);
+  }
+
+  return token;
+}
+
+async function sendMessage(platform, recipientId, text, businessId) {
   console.log(
-    `[SEND ATTEMPT] platform=${platform}, to=${recipientId}`
+    `[SEND ATTEMPT] platform=${platform}, to=${recipientId}, business=${businessId}`
   );
 
   if (platform === 'whatsapp') {
+    const { phoneNumberId, token } = await resolveWhatsAppCredentials(businessId);
+
     return sendWhatsAppMessage(
       recipientId,
-      text
+      text,
+      phoneNumberId,
+      token
     );
   }
 
   if (platform === 'instagram') {
+    const token = await resolveInstagramToken(businessId);
+
     return sendInstagramMessage(
       recipientId,
-      text
+      text,
+      token
     );
   }
 
@@ -668,16 +716,10 @@ async function sendMessage(platform, recipientId, text) {
 // WHATSAPP CLOUD API SEND
 // ---------------------------------------------------------------------
 
-async function sendWhatsAppMessage(recipientId, text) {
-  const phoneNumberId =
-    process.env.META_WHATSAPP_PHONE_NUMBER_ID;
-
-  const token =
-    process.env.META_WHATSAPP_TEST_TOKEN;
-
+async function sendWhatsAppMessage(recipientId, text, phoneNumberId, token) {
   if (!phoneNumberId || !token) {
     throw new Error(
-      'Missing META_WHATSAPP_PHONE_NUMBER_ID or META_WHATSAPP_TEST_TOKEN in .env'
+      'Missing WhatsApp phoneNumberId or token'
     );
   }
 
@@ -753,15 +795,9 @@ async function sendWhatsAppMessage(recipientId, text) {
 // INSTAGRAM GRAPH API SEND
 // ---------------------------------------------------------------------
 
-async function sendInstagramMessage(recipientId, text) {
-  const token =
-    process.env.META_INSTAGRAM_TOKEN ||
-    process.env.META_WHATSAPP_TEST_TOKEN;
-
+async function sendInstagramMessage(recipientId, text, token) {
   if (!token) {
-    throw new Error(
-      'Missing META_INSTAGRAM_TOKEN (or fallback META_WHATSAPP_TEST_TOKEN) in .env'
-    );
+    throw new Error('Missing Instagram token');
   }
 
   const url = 'https://graph.instagram.com/v21.0/me/messages';
@@ -1228,14 +1264,16 @@ app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
     return res.status(400).json({ errors });
   }
 
-  const { name, whatsappPhoneNumberId, instagramAccountId, businessProfile } = req.body;
+  const { name, whatsappPhoneNumberId, instagramAccountId, businessProfile, whatsappToken, instagramToken } = req.body;
 
   try {
     const business = await createBusiness({
       name,
       whatsappPhoneNumberId,
       instagramAccountId,
-      businessProfile
+      businessProfile,
+      whatsappToken,
+      instagramToken
     });
 
     return res.status(201).json(business);
@@ -1489,9 +1527,17 @@ ${errs.length > 0 ? `<div class="errors"><strong>Please fix the following:</stro
 <input type="text" id="whatsappPhoneNumberId" name="whatsappPhoneNumberId" value="${escapeHtml(v.whatsappPhoneNumberId || '')}">
 <p class="hint">Found in your Meta Developer dashboard under WhatsApp → API Setup.</p>
 
+<label for="whatsappToken">WhatsApp access token (optional)</label>
+<input type="password" id="whatsappToken" name="whatsappToken" value="${escapeHtml(v.whatsappToken || '')}">
+<p class="hint">Your WhatsApp Business API access token from Meta — used to send replies on your behalf. Kept confidential, never shown again after this.</p>
+
 <label for="instagramAccountId">Instagram account ID (optional)</label>
 <input type="text" id="instagramAccountId" name="instagramAccountId" value="${escapeHtml(v.instagramAccountId || '')}">
 <p class="hint">Found in your Meta Developer dashboard under Instagram → Business Account.</p>
+
+<label for="instagramToken">Instagram access token (optional)</label>
+<input type="password" id="instagramToken" name="instagramToken" value="${escapeHtml(v.instagramToken || '')}">
+<p class="hint">Your Instagram access token from Meta — used to send replies on your behalf. Kept confidential, never shown again after this.</p>
 
 <h2>Business hours</h2>
 ${Object.keys(DAY_FIELD_NAMES).map((day) => `
@@ -1624,6 +1670,8 @@ app.post('/onboard', async (req, res) => {
   const businessName = (body.businessName || '').trim();
   const whatsappPhoneNumberId = (body.whatsappPhoneNumberId || '').trim();
   const instagramAccountId = (body.instagramAccountId || '').trim();
+  const whatsappToken = (body.whatsappToken || '').trim();
+  const instagramToken = (body.instagramToken || '').trim();
 
   const hours = {};
 
@@ -1669,7 +1717,9 @@ app.post('/onboard', async (req, res) => {
       name: businessName,
       whatsappPhoneNumberId: whatsappPhoneNumberId || null,
       instagramAccountId: instagramAccountId || null,
-      businessProfile
+      businessProfile,
+      whatsappToken: whatsappToken || null,
+      instagramToken: instagramToken || null
     });
 
     const dashboardUrl = `${req.protocol}://${req.get('host')}/my-dashboard/${business.dashboard_token}`;

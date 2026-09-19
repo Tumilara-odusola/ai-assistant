@@ -16,7 +16,9 @@ async function initDatabase() {
       instagram_account_id TEXT UNIQUE,
       business_profile JSONB NOT NULL,
       created_at TIMESTAMP DEFAULT NOW(),
-      dashboard_token TEXT UNIQUE
+      dashboard_token TEXT UNIQUE,
+      whatsapp_token TEXT,
+      instagram_token TEXT
     )
   `);
 
@@ -104,6 +106,20 @@ async function initDatabase() {
   `);
 
   await backfillDashboardTokens();
+
+  // Per-business sending credentials. Added via ADD COLUMN IF NOT EXISTS so
+  // this is safe to rerun against the existing businesses table. Nullable —
+  // business_id=1 falls back to process.env values when these are unset,
+  // but every other business must supply its own.
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS whatsapp_token TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS instagram_token TEXT
+  `);
 }
 
 // Generates a dashboard_token for any business row that doesn't have one
@@ -228,19 +244,28 @@ async function getBusinessByInstagramAccountId(accountId) {
   return rows[0] || null;
 }
 
-async function createBusiness({ name, whatsappPhoneNumberId, instagramAccountId, businessProfile }) {
+async function createBusiness({
+  name,
+  whatsappPhoneNumberId,
+  instagramAccountId,
+  businessProfile,
+  whatsappToken,
+  instagramToken
+}) {
   const dashboardToken = crypto.randomBytes(24).toString('hex');
 
   const { rows } = await pool.query(
-    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile, dashboard_token)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile, dashboard_token, whatsapp_token, instagram_token)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
     [
       name,
       whatsappPhoneNumberId || null,
       instagramAccountId || null,
       JSON.stringify(businessProfile),
-      dashboardToken
+      dashboardToken,
+      whatsappToken || null,
+      instagramToken || null
     ]
   );
 
@@ -256,6 +281,15 @@ async function getBusinessByDashboardToken(token) {
   return rows[0] || null;
 }
 
+async function getBusinessById(id) {
+  const { rows } = await pool.query(
+    'SELECT * FROM businesses WHERE id = $1',
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
 module.exports = {
   pool,
   initDatabase,
@@ -263,5 +297,6 @@ module.exports = {
   getBusinessByWhatsAppPhoneId,
   getBusinessByInstagramAccountId,
   getBusinessByDashboardToken,
+  getBusinessById,
   createBusiness
 };
