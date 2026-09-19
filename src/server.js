@@ -1216,16 +1216,6 @@ app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove after checking the latest order
-// ---------------------------------------------------------------------
-
-app.get('/debug-latest-order', async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM orders ORDER BY id DESC LIMIT 1');
-
-  res.json(rows[0] || null);
-});
-
-// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
