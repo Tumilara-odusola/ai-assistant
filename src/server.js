@@ -1746,13 +1746,16 @@ app.post('/onboard', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove after confirming encrypt/decrypt roundtrip
+// TEMPORARY DEBUG ROUTE — remove after deleting the test business
 // ---------------------------------------------------------------------
 
-app.get('/debug-business-by-id/:id', requireDashboardAuth, async (req, res) => {
-  const business = await getBusinessById(parseInt(req.params.id, 10));
+app.post('/debug-delete-business/:id', requireDashboardAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    'DELETE FROM businesses WHERE id = $1 RETURNING id, name',
+    [parseInt(req.params.id, 10)]
+  );
 
-  res.json(business);
+  res.json(rows[0] || null);
 });
 
 // ---------------------------------------------------------------------
