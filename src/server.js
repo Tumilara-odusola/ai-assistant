@@ -20,6 +20,7 @@ const {
   getBusinessById,
   createBusiness
 } = require('./db');
+const { setupVoiceWebSocket } = require('./voice');
 
 const app = express();
 
@@ -1785,7 +1786,7 @@ const PORT = process.env.PORT || 3000;
 async function start() {
   await initDatabase();
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(
       `AI assistant server running on http://localhost:${PORT}`
     );
@@ -1796,6 +1797,8 @@ async function start() {
       `-d '{"message":"hey do you have anything free tomorrow?"}'`
     );
   });
+
+  setupVoiceWebSocket(server);
 }
 
 start().catch((err) => {
