@@ -1746,19 +1746,6 @@ app.post('/onboard', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove after confirming credential fallback logic
-// ---------------------------------------------------------------------
-
-app.get('/debug-resolve-whatsapp-creds/:businessId', requireDashboardAuth, async (req, res) => {
-  try {
-    const result = await resolveWhatsAppCredentials(parseInt(req.params.businessId, 10));
-    res.json({ threw: false, result });
-  } catch (err) {
-    res.json({ threw: true, message: err.message });
-  }
-});
-
-// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
