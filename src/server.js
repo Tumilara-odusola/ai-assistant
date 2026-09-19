@@ -161,6 +161,92 @@ function paymentLinkMessage(authorizationUrl) {
   return `Almost there! Complete your payment here: ${authorizationUrl}`;
 }
 
+// Explicit, non-AI-generated booking success text — used only when a
+// booking marker and an order marker both appear in the same reply, so
+// combining outcomes doesn't depend on the AI's own (possibly blended,
+// possibly wrong-about-the-other-thing) phrasing.
+function bookingSuccessMessage(booking) {
+  return `Your ${booking.service} is booked for ${booking.date} at ${booking.time}.`;
+}
+
+// Attempts whichever of confirmBooking/confirmOrder apply, then builds the
+// final customer-facing reply from both outcomes together — never letting
+// one operation's result silently overwrite the other's.
+async function resolveBookingAndOrderReply({ cleanReply, booking, order, businessProfile, businessId, key }) {
+  let bookingOutcome = null;
+  let orderOutcome = null;
+
+  if (booking) {
+    try {
+      await confirmBooking(
+        businessProfile,
+        businessId,
+        booking.date,
+        booking.time,
+        booking.service,
+        key
+      );
+
+      console.log(
+        `[BOOKING CONFIRMED] ${key}: ${booking.service} on ${booking.date} at ${booking.time}`
+      );
+
+      bookingOutcome = { success: true };
+    } catch (err) {
+      console.error('[BOOKING CONFIRMATION ERROR]', err);
+      bookingOutcome = { success: false, message: messageForBookingError(err) };
+    }
+  }
+
+  if (order) {
+    try {
+      const { authorizationUrl } = await confirmOrder(
+        businessProfile,
+        businessId,
+        order.product,
+        order.quantity,
+        key
+      );
+
+      console.log(
+        `[ORDER CONFIRMED] ${key}: ${order.quantity}x ${order.product}, payment link generated`
+      );
+
+      orderOutcome = { success: true, message: paymentLinkMessage(authorizationUrl) };
+    } catch (err) {
+      console.error('[ORDER CONFIRMATION ERROR]', err);
+      orderOutcome = { success: false, message: ORDER_SAVE_FAILURE_MESSAGE };
+    }
+  }
+
+  // Neither marker present — nothing to reconcile.
+  if (!bookingOutcome && !orderOutcome) {
+    return cleanReply;
+  }
+
+  // Only a booking marker — unchanged from prior behavior: success keeps
+  // the AI's own phrasing, failure always shows the specific message.
+  if (bookingOutcome && !orderOutcome) {
+    return bookingOutcome.success ? cleanReply : bookingOutcome.message;
+  }
+
+  // Only an order marker — success needs the real payment link (which
+  // can't come from the AI's own text), failure shows the specific message.
+  if (orderOutcome && !bookingOutcome) {
+    return orderOutcome.message;
+  }
+
+  // Both markers present. Build fully explicit text for both sides rather
+  // than leaning on cleanReply (which may blend or misstate one side) —
+  // this is the combination that was previously vulnerable to one outcome
+  // silently overwriting the other.
+  const bookingMessage = bookingOutcome.success
+    ? bookingSuccessMessage(booking)
+    : bookingOutcome.message;
+
+  return `${bookingMessage} ${orderOutcome.message}`;
+}
+
 function extractOrderConfirmation(replyText) {
   const match = replyText.match(ORDER_CONFIRMED_REGEX);
 
@@ -549,48 +635,14 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
   const { cleanReply: replyAfterBooking, booking } = extractBookingConfirmation(result.reply);
   const { cleanReply, order } = extractOrderConfirmation(replyAfterBooking);
 
-  let reply = cleanReply;
-
-  if (booking) {
-    try {
-      await confirmBooking(
-        businessProfile,
-        businessId,
-        booking.date,
-        booking.time,
-        booking.service,
-        key
-      );
-
-      console.log(
-        `[BOOKING CONFIRMED] ${key}: ${booking.service} on ${booking.date} at ${booking.time}`
-      );
-    } catch (err) {
-      console.error('[BOOKING CONFIRMATION ERROR]', err);
-      reply = messageForBookingError(err);
-    }
-  }
-
-  if (order) {
-    try {
-      const { authorizationUrl } = await confirmOrder(
-        businessProfile,
-        businessId,
-        order.product,
-        order.quantity,
-        key
-      );
-
-      console.log(
-        `[ORDER CONFIRMED] ${key}: ${order.quantity}x ${order.product}, payment link generated`
-      );
-
-      reply = paymentLinkMessage(authorizationUrl);
-    } catch (err) {
-      console.error('[ORDER CONFIRMATION ERROR]', err);
-      reply = ORDER_SAVE_FAILURE_MESSAGE;
-    }
-  }
+  const reply = await resolveBookingAndOrderReply({
+    cleanReply,
+    booking,
+    order,
+    businessProfile,
+    businessId,
+    key
+  });
 
   history.push({
     role: 'user',
@@ -910,48 +962,14 @@ app.post('/test-message', async (req, res) => {
     const { cleanReply: replyAfterBooking, booking } = extractBookingConfirmation(result.reply);
     const { cleanReply, order } = extractOrderConfirmation(replyAfterBooking);
 
-    result.reply = cleanReply;
-
-    if (booking) {
-      try {
-        await confirmBooking(
-          businessProfile,
-          FALLBACK_BUSINESS_ID,
-          booking.date,
-          booking.time,
-          booking.service,
-          key
-        );
-
-        console.log(
-          `[BOOKING CONFIRMED] ${key}: ${booking.service} on ${booking.date} at ${booking.time}`
-        );
-      } catch (err) {
-        console.error('[BOOKING CONFIRMATION ERROR]', err);
-        result.reply = messageForBookingError(err);
-      }
-    }
-
-    if (order) {
-      try {
-        const { authorizationUrl } = await confirmOrder(
-          businessProfile,
-          FALLBACK_BUSINESS_ID,
-          order.product,
-          order.quantity,
-          key
-        );
-
-        console.log(
-          `[ORDER CONFIRMED] ${key}: ${order.quantity}x ${order.product}, payment link generated`
-        );
-
-        result.reply = paymentLinkMessage(authorizationUrl);
-      } catch (err) {
-        console.error('[ORDER CONFIRMATION ERROR]', err);
-        result.reply = ORDER_SAVE_FAILURE_MESSAGE;
-      }
-    }
+    result.reply = await resolveBookingAndOrderReply({
+      cleanReply,
+      booking,
+      order,
+      businessProfile,
+      businessId: FALLBACK_BUSINESS_ID,
+      key
+    });
 
     history.push({
       role: 'user',
