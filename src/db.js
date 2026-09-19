@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -14,7 +15,8 @@ async function initDatabase() {
       whatsapp_phone_number_id TEXT UNIQUE,
       instagram_account_id TEXT UNIQUE,
       business_profile JSONB NOT NULL,
-      created_at TIMESTAMP DEFAULT NOW()
+      created_at TIMESTAMP DEFAULT NOW(),
+      dashboard_token TEXT UNIQUE
     )
   `);
 
@@ -92,6 +94,41 @@ async function initDatabase() {
       END IF;
     END $$;
   `);
+
+  // dashboard_token is the bearer credential for /my-dashboard/:token. Added
+  // via ADD COLUMN IF NOT EXISTS so this is safe to rerun against the
+  // existing businesses table.
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS dashboard_token TEXT UNIQUE
+  `);
+
+  await backfillDashboardTokens();
+}
+
+// Generates a dashboard_token for any business row that doesn't have one
+// yet (e.g. rows created before this column existed). Each row needs its
+// own unique token, so this updates one row at a time rather than a single
+// bulk UPDATE. Safe to rerun — only touches rows where the token is NULL.
+async function backfillDashboardTokens() {
+  const { rows } = await pool.query(
+    'SELECT id FROM businesses WHERE dashboard_token IS NULL'
+  );
+
+  for (const row of rows) {
+    const token = crypto.randomBytes(24).toString('hex');
+
+    await pool.query(
+      'UPDATE businesses SET dashboard_token = $1 WHERE id = $2',
+      [token, row.id]
+    );
+  }
+
+  if (rows.length > 0) {
+    console.log(
+      `[BACKFILL DASHBOARD TOKENS] Generated tokens for ${rows.length} business(es)`
+    );
+  }
 }
 
 // One-time migration: seeds the current businessProfile.json as the first
@@ -192,19 +229,31 @@ async function getBusinessByInstagramAccountId(accountId) {
 }
 
 async function createBusiness({ name, whatsappPhoneNumberId, instagramAccountId, businessProfile }) {
+  const dashboardToken = crypto.randomBytes(24).toString('hex');
+
   const { rows } = await pool.query(
-    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile, dashboard_token)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
     [
       name,
       whatsappPhoneNumberId || null,
       instagramAccountId || null,
-      JSON.stringify(businessProfile)
+      JSON.stringify(businessProfile),
+      dashboardToken
     ]
   );
 
   return rows[0];
+}
+
+async function getBusinessByDashboardToken(token) {
+  const { rows } = await pool.query(
+    'SELECT * FROM businesses WHERE dashboard_token = $1',
+    [token]
+  );
+
+  return rows[0] || null;
 }
 
 module.exports = {
@@ -213,5 +262,6 @@ module.exports = {
   migrateInitialBusiness,
   getBusinessByWhatsAppPhoneId,
   getBusinessByInstagramAccountId,
+  getBusinessByDashboardToken,
   createBusiness
 };

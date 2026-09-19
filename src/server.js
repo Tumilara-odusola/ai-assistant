@@ -16,6 +16,7 @@ const {
   initDatabase,
   getBusinessByWhatsAppPhoneId,
   getBusinessByInstagramAccountId,
+  getBusinessByDashboardToken,
   createBusiness
 } = require('./db');
 
@@ -1034,10 +1035,7 @@ function requireDashboardAuth(req, res, next) {
   next();
 }
 
-app.get('/dashboard', requireDashboardAuth, async (req, res) => {
-  const parsedBusinessId = parseInt(req.query.businessId, 10);
-  const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
-
+async function renderBookingsOrdersPage(businessId) {
   const [{ rows: businessRows }, { rows: bookings }, { rows: orders }] = await Promise.all([
     pool.query('SELECT name FROM businesses WHERE id = $1', [businessId]),
     pool.query(
@@ -1070,7 +1068,7 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
       <td>${escapeHtml(new Date(order.created_at).toLocaleString())}</td>
     </tr>`).join('');
 
-  res.type('html').send(`<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1143,7 +1141,44 @@ ${orders.length === 0 ? '<p class="empty">No orders yet.</p>' : `<table>
 </table>`}
 </section>
 </body>
+</html>`;
+}
+
+app.get('/dashboard', requireDashboardAuth, async (req, res) => {
+  const parsedBusinessId = parseInt(req.query.businessId, 10);
+  const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
+
+  res.type('html').send(await renderBookingsOrdersPage(businessId));
+});
+
+app.get('/my-dashboard/:token', async (req, res) => {
+  const business = await getBusinessByDashboardToken(req.params.token);
+
+  if (!business) {
+    return res.status(404).type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard Not Found</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f7f7f8;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 60px 20px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<h1>Dashboard not found</h1>
+<p>This link isn't valid. Double-check the URL you were given.</p>
+</body>
 </html>`);
+  }
+
+  res.type('html').send(await renderBookingsOrdersPage(business.id));
 });
 
 // ---------------------------------------------------------------------
@@ -1508,7 +1543,7 @@ ${renderOfferingRows('product', productNames, productPrices, null)}
 </html>`;
 }
 
-function renderOnboardSuccess(business) {
+function renderOnboardSuccess(business, dashboardUrl) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1552,6 +1587,18 @@ function renderOnboardSuccess(business) {
     font-weight: 600;
     margin: 12px 0;
   }
+  .link-box {
+    background: #f7f7f8;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 13px;
+    word-break: break-all;
+    margin: 16px 0;
+  }
+  .link-box a {
+    color: #2563eb;
+  }
 </style>
 </head>
 <body>
@@ -1559,7 +1606,9 @@ function renderOnboardSuccess(business) {
   <h1>🎉 ${escapeHtml(business.name)} is set up!</h1>
   <p>Your business ID is:</p>
   <div class="id-badge">#${business.id}</div>
-  <p>Once your WhatsApp/Instagram IDs are correctly connected, messages will route to this business automatically. You can view its bookings and orders on the dashboard once you have access.</p>
+  <p>Once your WhatsApp/Instagram IDs are correctly connected, messages will route to this business automatically.</p>
+  <p><strong>Bookmark this link</strong> — it's your personal dashboard for viewing bookings and orders, no login required:</p>
+  <div class="link-box"><a href="${escapeHtml(dashboardUrl)}">${escapeHtml(dashboardUrl)}</a></div>
 </div>
 </body>
 </html>`;
@@ -1623,7 +1672,9 @@ app.post('/onboard', async (req, res) => {
       businessProfile
     });
 
-    return res.type('html').send(renderOnboardSuccess(business));
+    const dashboardUrl = `${req.protocol}://${req.get('host')}/my-dashboard/${business.dashboard_token}`;
+
+    return res.type('html').send(renderOnboardSuccess(business, dashboardUrl));
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).type('html').send(
