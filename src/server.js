@@ -93,6 +93,7 @@ app.post(
 );
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Fallback business used only where there's no real webhook payload to look
 // up a business from — the /test-message endpoint and the (unimplemented)
@@ -1212,6 +1213,434 @@ app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
 
     console.error('[CREATE BUSINESS ERROR]', err);
     return res.status(500).json({ error: 'Failed to create business' });
+  }
+});
+
+// ---------------------------------------------------------------------
+// PUBLIC ONBOARDING
+// ---------------------------------------------------------------------
+
+const DAY_FIELD_NAMES = {
+  mon: 'hoursMon',
+  tue: 'hoursTue',
+  wed: 'hoursWed',
+  thu: 'hoursThu',
+  fri: 'hoursFri',
+  sat: 'hoursSat',
+  sun: 'hoursSun'
+};
+
+const DAY_LABELS = {
+  mon: 'Monday',
+  tue: 'Tuesday',
+  wed: 'Wednesday',
+  thu: 'Thursday',
+  fri: 'Friday',
+  sat: 'Saturday',
+  sun: 'Sunday'
+};
+
+const DEFAULT_VOICE = {
+  tone: 'friendly and professional, like a helpful staff member texting back',
+  useEmoji: true,
+  maxReplyLength: 'short - 1-2 sentences unless the customer asks something detailed',
+  avoidPhrases: [
+    "I'd be happy to assist you",
+    'I understand your concern',
+    "Let me know if there's anything else!",
+    'Thank you for reaching out',
+    'As an AI'
+  ],
+  sampleReplies: []
+};
+
+const DEFAULT_ESCALATE_TERMS = ['refund', 'complaint', 'angry', 'lawsuit', 'manager'];
+
+function toArray(value) {
+  return [].concat(value === undefined || value === null ? [] : value);
+}
+
+// Parses repeatable row inputs (services or products) from raw form strings
+// into structured rows, skipping blank rows and collecting per-row errors.
+// `durations` is null for products, which have no duration field.
+function parseOfferingRows(names, prices, durations) {
+  const rows = [];
+  const errors = [];
+
+  for (let i = 0; i < names.length; i++) {
+    const name = (names[i] || '').trim();
+
+    if (!name) {
+      continue;
+    }
+
+    const price = Number(prices[i]);
+
+    if (!Number.isFinite(price) || price <= 0) {
+      errors.push(`"${name}": price must be a positive number`);
+      continue;
+    }
+
+    const row = { name, price };
+
+    if (durations) {
+      const duration = Number(durations[i]);
+
+      if (!Number.isFinite(duration) || duration <= 0) {
+        errors.push(`"${name}": duration must be a positive number of minutes`);
+        continue;
+      }
+
+      row.durationMinutes = duration;
+    }
+
+    rows.push(row);
+  }
+
+  return { rows, errors };
+}
+
+function renderOfferingRows(prefix, names, prices, durations) {
+  return names.map((name, i) => `
+    <div class="row">
+      <input type="text" name="${prefix}Name[]" placeholder="Name" value="${escapeHtml(name)}">
+      <input type="number" name="${prefix}Price[]" placeholder="Price" min="0" step="0.01" value="${escapeHtml(prices[i] ?? '')}">
+      ${durations ? `<input type="number" name="${prefix}Duration[]" placeholder="Duration (min)" min="1" step="1" value="${escapeHtml(durations[i] ?? '')}">` : ''}
+      <button type="button" class="remove-row" onclick="this.parentElement.remove()">Remove</button>
+    </div>`).join('');
+}
+
+function renderOnboardForm({ values, errors }) {
+  const v = values || {};
+  const errs = errors || [];
+
+  const serviceNames = toArray(v.serviceName).length ? toArray(v.serviceName) : [''];
+  const servicePrices = toArray(v.servicePrice);
+  const serviceDurations = toArray(v.serviceDuration);
+  const productNames = toArray(v.productName).length ? toArray(v.productName) : [''];
+  const productPrices = toArray(v.productPrice);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Onboard Your Business</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f7f7f8;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 40px 20px;
+  }
+  form {
+    max-width: 640px;
+    margin: 0 auto;
+    background: #fff;
+    padding: 32px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  h1 {
+    font-size: 22px;
+    margin: 0 0 8px;
+  }
+  p.intro {
+    color: #555;
+    margin: 0 0 28px;
+    font-size: 14px;
+  }
+  h2 {
+    font-size: 16px;
+    margin: 32px 0 12px;
+    border-top: 1px solid #eee;
+    padding-top: 24px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 16px 0 4px;
+  }
+  input[type="text"],
+  input[type="number"] {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 14px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+  }
+  .hint {
+    color: #888;
+    font-size: 12px;
+    margin: 4px 0 0;
+  }
+  .day-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0;
+  }
+  .day-row label {
+    width: 100px;
+    margin: 0;
+    flex-shrink: 0;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .row input {
+    flex: 1;
+  }
+  .remove-row {
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: #888;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .add-row {
+    background: none;
+    border: none;
+    color: #2563eb;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  .errors {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    font-size: 13px;
+  }
+  .errors ul {
+    margin: 4px 0 0;
+    padding-left: 18px;
+  }
+  button[type="submit"] {
+    width: 100%;
+    margin-top: 32px;
+    padding: 12px;
+    background: #1a1a1a;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 15px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<form method="POST" action="/onboard">
+<h1>Onboard Your Business</h1>
+<p class="intro">Set up your business to start taking bookings or orders over WhatsApp and Instagram.</p>
+
+${errs.length > 0 ? `<div class="errors"><strong>Please fix the following:</strong><ul>${errs.map((e) => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : ''}
+
+<label for="businessName">Business name</label>
+<input type="text" id="businessName" name="businessName" value="${escapeHtml(v.businessName || '')}">
+
+<label for="whatsappPhoneNumberId">WhatsApp phone number ID (optional)</label>
+<input type="text" id="whatsappPhoneNumberId" name="whatsappPhoneNumberId" value="${escapeHtml(v.whatsappPhoneNumberId || '')}">
+<p class="hint">Found in your Meta Developer dashboard under WhatsApp → API Setup.</p>
+
+<label for="instagramAccountId">Instagram account ID (optional)</label>
+<input type="text" id="instagramAccountId" name="instagramAccountId" value="${escapeHtml(v.instagramAccountId || '')}">
+<p class="hint">Found in your Meta Developer dashboard under Instagram → Business Account.</p>
+
+<h2>Business hours</h2>
+${Object.keys(DAY_FIELD_NAMES).map((day) => `
+  <div class="day-row">
+    <label for="${DAY_FIELD_NAMES[day]}">${DAY_LABELS[day]}</label>
+    <input type="text" id="${DAY_FIELD_NAMES[day]}" name="${DAY_FIELD_NAMES[day]}" placeholder="9:00-19:00 or closed" value="${escapeHtml(v[DAY_FIELD_NAMES[day]] || '')}">
+  </div>`).join('')}
+
+<h2>Services</h2>
+<div id="services-container">
+${renderOfferingRows('service', serviceNames, servicePrices, serviceDurations)}
+</div>
+<button type="button" class="add-row" onclick="addRow('service-row-template','services-container')">+ Add another service</button>
+
+<h2>Products</h2>
+<div id="products-container">
+${renderOfferingRows('product', productNames, productPrices, null)}
+</div>
+<button type="button" class="add-row" onclick="addRow('product-row-template','products-container')">+ Add another product</button>
+
+<button type="submit">Create Business</button>
+</form>
+
+<template id="service-row-template">
+  <div class="row">
+    <input type="text" name="serviceName[]" placeholder="Name">
+    <input type="number" name="servicePrice[]" placeholder="Price" min="0" step="0.01">
+    <input type="number" name="serviceDuration[]" placeholder="Duration (min)" min="1" step="1">
+    <button type="button" class="remove-row" onclick="this.parentElement.remove()">Remove</button>
+  </div>
+</template>
+
+<template id="product-row-template">
+  <div class="row">
+    <input type="text" name="productName[]" placeholder="Name">
+    <input type="number" name="productPrice[]" placeholder="Price" min="0" step="0.01">
+    <button type="button" class="remove-row" onclick="this.parentElement.remove()">Remove</button>
+  </div>
+</template>
+
+<script>
+  function addRow(templateId, containerId) {
+    var template = document.getElementById(templateId);
+    var container = document.getElementById(containerId);
+    container.appendChild(template.content.cloneNode(true));
+  }
+</script>
+</body>
+</html>`;
+}
+
+function renderOnboardSuccess(business) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Business Created</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f7f7f8;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 40px 20px;
+    display: flex;
+    justify-content: center;
+  }
+  .card {
+    max-width: 480px;
+    background: #fff;
+    padding: 32px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    text-align: center;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 12px;
+  }
+  p {
+    color: #555;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .id-badge {
+    display: inline-block;
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 18px;
+    font-weight: 600;
+    margin: 12px 0;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🎉 ${escapeHtml(business.name)} is set up!</h1>
+  <p>Your business ID is:</p>
+  <div class="id-badge">#${business.id}</div>
+  <p>Once your WhatsApp/Instagram IDs are correctly connected, messages will route to this business automatically. You can view its bookings and orders on the dashboard once you have access.</p>
+</div>
+</body>
+</html>`;
+}
+
+app.get('/onboard', (req, res) => {
+  res.type('html').send(renderOnboardForm({ values: {}, errors: [] }));
+});
+
+app.post('/onboard', async (req, res) => {
+  const body = req.body || {};
+
+  const businessName = (body.businessName || '').trim();
+  const whatsappPhoneNumberId = (body.whatsappPhoneNumberId || '').trim();
+  const instagramAccountId = (body.instagramAccountId || '').trim();
+
+  const hours = {};
+
+  for (const day of Object.keys(DAY_FIELD_NAMES)) {
+    const raw = (body[DAY_FIELD_NAMES[day]] || '').trim();
+    hours[day] = raw || 'closed';
+  }
+
+  const { rows: services, errors: serviceErrors } = parseOfferingRows(
+    toArray(body.serviceName),
+    toArray(body.servicePrice),
+    toArray(body.serviceDuration)
+  );
+
+  const { rows: products, errors: productErrors } = parseOfferingRows(
+    toArray(body.productName),
+    toArray(body.productPrice),
+    null
+  );
+
+  const businessProfile = {
+    businessName,
+    currency: 'NGN',
+    voice: DEFAULT_VOICE,
+    hours,
+    services,
+    products,
+    escalateIfCustomerMentions: DEFAULT_ESCALATE_TERMS
+  };
+
+  const errors = [
+    ...serviceErrors,
+    ...productErrors,
+    ...validateNewBusinessPayload({ name: businessName, businessProfile })
+  ];
+
+  if (errors.length > 0) {
+    return res.status(400).type('html').send(renderOnboardForm({ values: body, errors }));
+  }
+
+  try {
+    const business = await createBusiness({
+      name: businessName,
+      whatsappPhoneNumberId: whatsappPhoneNumberId || null,
+      instagramAccountId: instagramAccountId || null,
+      businessProfile
+    });
+
+    return res.type('html').send(renderOnboardSuccess(business));
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).type('html').send(
+        renderOnboardForm({
+          values: body,
+          errors: ['A business with that WhatsApp phone number ID or Instagram account ID already exists']
+        })
+      );
+    }
+
+    console.error('[ONBOARD ERROR]', err);
+    return res.status(500).type('html').send(
+      renderOnboardForm({
+        values: body,
+        errors: ['Something went wrong creating your business — please try again.']
+      })
+    );
   }
 });
 
