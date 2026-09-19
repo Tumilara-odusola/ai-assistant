@@ -1746,6 +1746,16 @@ app.post('/onboard', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
+// TEMPORARY DEBUG ROUTE — remove after confirming encrypt/decrypt roundtrip
+// ---------------------------------------------------------------------
+
+app.get('/debug-business-by-id/:id', requireDashboardAuth, async (req, res) => {
+  const business = await getBusinessById(parseInt(req.params.id, 10));
+
+  res.json(business);
+});
+
+// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
