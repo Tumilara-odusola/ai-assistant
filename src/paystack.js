@@ -1,3 +1,27 @@
+const crypto = require('crypto');
+
+function verifyPaystackSignature(rawBody, signatureHeader) {
+  const secretKey = process.env.PAYSTACK_SECRET_KEY;
+
+  if (!secretKey || !signatureHeader) {
+    return false;
+  }
+
+  const expectedSignature = crypto
+    .createHmac('sha512', secretKey)
+    .update(rawBody)
+    .digest('hex');
+
+  const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
+  const providedBuffer = Buffer.from(signatureHeader, 'utf8');
+
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
 async function initializePayment(email, amount, currency, reference, metadata) {
   const secretKey = process.env.PAYSTACK_SECRET_KEY;
 
@@ -61,4 +85,4 @@ async function initializePayment(email, amount, currency, reference, metadata) {
   };
 }
 
-module.exports = { initializePayment };
+module.exports = { initializePayment, verifyPaystackSignature };

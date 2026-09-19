@@ -10,6 +10,7 @@ const {
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
 const { confirmOrder } = require('./orders');
+const { verifyPaystackSignature } = require('./paystack');
 const {
   pool,
   initDatabase,
@@ -19,6 +20,78 @@ const {
 } = require('./db');
 
 const app = express();
+
+// ---------------------------------------------------------------------
+// PAYSTACK WEBHOOK
+// Registered before the global express.json() below on purpose: this
+// route needs the raw request body (as a Buffer) to verify Paystack's
+// HMAC signature. Express walks middleware/routes in registration order,
+// so putting this route first means it consumes the raw body and responds
+// before the later express.json() layer ever sees this request — for
+// every other path, execution falls through to express.json() as normal.
+// ---------------------------------------------------------------------
+
+app.post(
+  '/webhook/paystack',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    const signature = req.headers['x-paystack-signature'];
+    const rawBody = req.body;
+
+    if (!verifyPaystackSignature(rawBody, signature)) {
+      console.error('[PAYSTACK WEBHOOK] Invalid signature, rejecting');
+      return res.sendStatus(401);
+    }
+
+    // Ack immediately once the request is verified — Paystack expects a
+    // fast 200 and retries on anything else. Everything past this point
+    // is best-effort and only ever logged, never reflected in the response.
+    res.sendStatus(200);
+
+    let event;
+
+    try {
+      event = JSON.parse(rawBody.toString('utf8'));
+    } catch (err) {
+      console.error('[PAYSTACK WEBHOOK] Failed to parse JSON body', err);
+      return;
+    }
+
+    console.log('[PAYSTACK WEBHOOK]', JSON.stringify(event, null, 2));
+
+    if (event.event !== 'charge.success') {
+      console.log(`[PAYSTACK WEBHOOK] Ignoring event type: ${event.event}`);
+      return;
+    }
+
+    const reference = event.data?.reference;
+
+    if (!reference) {
+      console.error('[PAYSTACK WEBHOOK] charge.success event missing data.reference');
+      return;
+    }
+
+    try {
+      const result = await pool.query(
+        `UPDATE orders SET payment_status = 'paid' WHERE payment_reference = $1`,
+        [reference]
+      );
+
+      if (result.rowCount === 0) {
+        console.error(
+          `[PAYSTACK WEBHOOK] No matching order found for reference=${reference}`
+        );
+      } else {
+        console.log(
+          `[PAYSTACK WEBHOOK] Order marked as paid for reference=${reference}`
+        );
+      }
+    } catch (err) {
+      console.error('[PAYSTACK WEBHOOK] Failed to update order payment status', err);
+    }
+  }
+);
+
 app.use(express.json());
 
 // Fallback business used only where there's no real webhook payload to look
