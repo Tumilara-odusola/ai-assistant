@@ -1430,11 +1430,14 @@ app.get('/my-dashboard/:token', async (req, res) => {
 // SELF-SERVICE BUSINESS SETTINGS
 // ---------------------------------------------------------------------
 
-function channelStatusHtml(label, isConnected) {
+function channelStatusHtml(label, isConnected, notConnectedGuidance) {
   return `
-    <div class="channel-row">
-      <span class="channel-label">${escapeHtml(label)}</span>
-      <span class="channel-status ${isConnected ? 'connected' : 'disconnected'}">${isConnected ? 'Connected' : 'Not connected'}</span>
+    <div class="channel-entry">
+      <div class="channel-row">
+        <span class="channel-label">${escapeHtml(label)}</span>
+        <span class="channel-status ${isConnected ? 'connected' : 'disconnected'}">${isConnected ? 'Connected' : 'Not connected'}</span>
+      </div>
+      ${!isConnected && notConnectedGuidance ? `<p class="channel-guidance">${escapeHtml(notConnectedGuidance)}</p>` : ''}
     </div>`;
 }
 
@@ -1580,11 +1583,13 @@ function renderSettingsForm({ token, business, values, errors, saved }) {
     margin-bottom: 24px;
     font-size: 13px;
   }
+  .channel-entry {
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(26, 46, 43, 0.14);
+  }
   .channel-row {
     display: flex;
     justify-content: space-between;
-    padding: 10px 0;
-    border-bottom: 1px solid rgba(26, 46, 43, 0.14);
     font-size: 14px;
   }
   .channel-status {
@@ -1598,6 +1603,12 @@ function renderSettingsForm({ token, business, values, errors, saved }) {
   }
   .channel-status.disconnected {
     color: var(--muted);
+  }
+  .channel-guidance {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 6px 0 0;
+    line-height: 1.5;
   }
   button[type="submit"] {
     width: 100%;
@@ -1622,9 +1633,21 @@ ${saved ? '<div class="saved-banner">Saved!</div>' : ''}
 ${errs.length > 0 ? `<div class="errors"><strong>Please fix the following:</strong><ul>${errs.map((e) => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : ''}
 
 <h2>Connected Channels</h2>
-${channelStatusHtml('WhatsApp', Boolean(business.whatsapp_phone_number_id))}
-${channelStatusHtml('Instagram', Boolean(business.instagram_account_id))}
-${channelStatusHtml('Voice', Boolean(business.twilio_phone_number))}
+${channelStatusHtml(
+  'WhatsApp',
+  Boolean(business.whatsapp_phone_number_id),
+  "You'll need a WhatsApp Business number set up through Meta's Developer platform — contact us for help getting this configured."
+)}
+${channelStatusHtml(
+  'Instagram',
+  Boolean(business.instagram_account_id),
+  "You'll need to connect Instagram through Meta's Developer platform, which requires business verification — contact us for help getting this configured."
+)}
+${channelStatusHtml(
+  'Voice',
+  Boolean(business.twilio_phone_number),
+  'This feature is still being rolled out.'
+)}
 
 <label for="businessName">Business name</label>
 <input type="text" id="businessName" name="businessName" value="${escapeHtml(v.businessName || '')}">
