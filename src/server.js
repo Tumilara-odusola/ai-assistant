@@ -1579,63 +1579,90 @@ function renderOnboardForm({ values, errors }) {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Onboard Your Business</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+    --accent: #D4A257;
+    --alert: #8B3A3A;
+  }
+  * {
+    box-sizing: border-box;
+  }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #f7f7f8;
-    color: #1a1a1a;
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
     margin: 0;
-    padding: 40px 20px;
+    padding: 40px 20px 80px;
   }
   form {
     max-width: 640px;
     margin: 0 auto;
-    background: #fff;
-    padding: 32px;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
   h1 {
-    font-size: 22px;
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(22px, 5vw, 28px);
+    font-weight: 700;
     margin: 0 0 8px;
   }
   p.intro {
-    color: #555;
+    color: var(--muted);
     margin: 0 0 28px;
     font-size: 14px;
   }
   h2 {
-    font-size: 16px;
-    margin: 32px 0 12px;
-    border-top: 1px solid #eee;
+    font-family: 'Lora', Georgia, serif;
+    font-size: 18px;
+    font-weight: 700;
+    margin: 36px 0 16px;
+    border-top: 2px solid var(--text);
     padding-top: 24px;
   }
   label {
     display: block;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
-    margin: 16px 0 4px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 18px 0 6px;
   }
   input[type="text"],
-  input[type="number"] {
+  input[type="number"],
+  input[type="password"] {
     width: 100%;
-    padding: 8px 10px;
-    font-size: 14px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    box-sizing: border-box;
+    padding: 8px 0;
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    color: var(--text);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(26, 46, 43, 0.25);
+    border-radius: 0;
+  }
+  input[type="text"]:focus,
+  input[type="number"]:focus,
+  input[type="password"]:focus {
+    outline: none;
+    border-bottom-color: var(--accent);
   }
   .hint {
-    color: #888;
+    color: var(--muted);
     font-size: 12px;
-    margin: 4px 0 0;
+    margin: 6px 0 0;
   }
   .day-row {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin: 8px 0;
+    margin: 10px 0;
   }
   .day-row label {
     width: 100px;
@@ -1644,38 +1671,39 @@ function renderOnboardForm({ values, errors }) {
   }
   .row {
     display: flex;
-    gap: 8px;
+    gap: 12px;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
   }
   .row input {
     flex: 1;
   }
   .remove-row {
     background: none;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    border: 1px solid rgba(26, 46, 43, 0.25);
+    border-radius: 3px;
     padding: 8px 10px;
     font-size: 12px;
-    color: #888;
+    color: var(--muted);
     cursor: pointer;
     white-space: nowrap;
   }
   .add-row {
     background: none;
     border: none;
-    color: #2563eb;
+    color: var(--accent);
+    font-weight: 600;
     font-size: 13px;
     cursor: pointer;
     padding: 4px 0;
   }
   .errors {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #991b1b;
-    padding: 12px 16px;
+    background: rgba(139, 58, 58, 0.08);
+    border: 1px solid var(--alert);
+    color: var(--alert);
+    padding: 14px 16px;
     border-radius: 4px;
-    margin-bottom: 20px;
+    margin-bottom: 24px;
     font-size: 13px;
   }
   .errors ul {
@@ -1684,12 +1712,14 @@ function renderOnboardForm({ values, errors }) {
   }
   button[type="submit"] {
     width: 100%;
-    margin-top: 32px;
-    padding: 12px;
-    background: #1a1a1a;
-    color: #fff;
+    margin-top: 36px;
+    padding: 14px;
+    background: var(--text);
+    color: var(--bg);
     border: none;
     border-radius: 4px;
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
     font-size: 15px;
     cursor: pointer;
   }
@@ -1776,56 +1806,66 @@ function renderOnboardSuccess(business, dashboardUrl) {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Business Created</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+    --accent: #D4A257;
+  }
+  * {
+    box-sizing: border-box;
+  }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #f7f7f8;
-    color: #1a1a1a;
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
     margin: 0;
-    padding: 40px 20px;
+    padding: 60px 20px;
     display: flex;
     justify-content: center;
   }
   .card {
     max-width: 480px;
-    background: #fff;
-    padding: 32px;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     text-align: center;
   }
   h1 {
-    font-size: 20px;
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(20px, 5vw, 24px);
+    font-weight: 700;
     margin: 0 0 12px;
   }
   p {
-    color: #555;
+    color: var(--muted);
     font-size: 14px;
     line-height: 1.5;
   }
   .id-badge {
     display: inline-block;
-    background: #f0fdf4;
-    color: #166534;
-    border: 1px solid #bbf7d0;
-    padding: 8px 16px;
+    font-family: 'Lora', Georgia, serif;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 8px 20px;
     border-radius: 4px;
-    font-size: 18px;
-    font-weight: 600;
-    margin: 12px 0;
+    font-size: 20px;
+    font-weight: 700;
+    margin: 16px 0;
   }
   .link-box {
-    background: #f7f7f8;
-    border: 1px solid #ddd;
+    border: 1px solid rgba(26, 46, 43, 0.25);
     border-radius: 4px;
-    padding: 12px;
+    padding: 14px;
     font-size: 13px;
     word-break: break-all;
     margin: 16px 0;
   }
   .link-box a {
-    color: #2563eb;
+    color: var(--accent);
   }
 </style>
 </head>
