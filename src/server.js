@@ -1094,7 +1094,10 @@ function requireDashboardAuth(req, res, next) {
 
 async function fetchDashboardData(businessId) {
   const [{ rows: businessRows }, { rows: bookings }, { rows: orders }] = await Promise.all([
-    pool.query('SELECT name, business_profile FROM businesses WHERE id = $1', [businessId]),
+    pool.query(
+      'SELECT name, business_profile, dashboard_token FROM businesses WHERE id = $1',
+      [businessId]
+    ),
     pool.query(
       'SELECT * FROM bookings WHERE business_id = $1 ORDER BY date, time',
       [businessId]
@@ -1110,6 +1113,7 @@ async function fetchDashboardData(businessId) {
   return {
     businessName: business?.name || `Business #${businessId} (not found)`,
     businessProfile: business?.business_profile || null,
+    dashboardToken: business?.dashboard_token || null,
     bookings,
     orders
   };
@@ -1179,14 +1183,18 @@ function buildActivityRows(businessProfile, bookings, orders) {
   return [...bookingRows, ...orderRows].sort((a, b) => b.timestamp - a.timestamp);
 }
 
-async function renderBookingsOrdersPage(businessId) {
-  const { businessName, businessProfile, bookings, orders } =
+async function renderBookingsOrdersPage(businessId, { requestOrigin } = {}) {
+  const { businessName, businessProfile, dashboardToken, bookings, orders } =
     await fetchDashboardData(businessId);
 
   const currency = businessProfile?.currency || 'NGN';
   const todayDate = formatDateYYYYMMDD(new Date());
   const summary = computeTodaySummary(businessProfile, bookings, orders, todayDate);
   const activity = buildActivityRows(businessProfile, bookings, orders);
+
+  const dashboardUrl = requestOrigin && dashboardToken
+    ? `${requestOrigin}/my-dashboard/${dashboardToken}`
+    : null;
 
   const activityHtml = activity.map((row) => `
     <div class="row">
@@ -1276,6 +1284,19 @@ async function renderBookingsOrdersPage(businessId) {
     color: var(--muted);
     margin: 0 0 8px;
   }
+  .admin-link-section {
+    margin-bottom: 24px;
+  }
+  .link-box {
+    border: 1px solid rgba(26, 46, 43, 0.25);
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 13px;
+    word-break: break-all;
+  }
+  .link-box a {
+    color: var(--accent);
+  }
   .row {
     display: flex;
     justify-content: space-between;
@@ -1346,6 +1367,11 @@ async function renderBookingsOrdersPage(businessId) {
   <p class="eyebrow">Today</p>
   <h1>${escapeHtml(businessName)}</h1>
 
+  ${dashboardUrl ? `<div class="admin-link-section">
+    <p class="section-label">Business Dashboard Link</p>
+    <div class="link-box"><a href="${escapeHtml(dashboardUrl)}">${escapeHtml(dashboardUrl)}</a></div>
+  </div>` : ''}
+
   <div class="hero">
     <div>
       <p class="stat-label">Bookings Today</p>
@@ -1368,7 +1394,9 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
   const parsedBusinessId = parseInt(req.query.businessId, 10);
   const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
 
-  res.type('html').send(await renderBookingsOrdersPage(businessId));
+  const requestOrigin = `${req.protocol}://${req.get('host')}`;
+
+  res.type('html').send(await renderBookingsOrdersPage(businessId, { requestOrigin }));
 });
 
 function renderNotFoundPage(title, message) {
