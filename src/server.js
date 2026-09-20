@@ -270,13 +270,54 @@ function extractOrderConfirmation(replyText) {
 
 const conversations = {};
 
+const MAX_HISTORY_MESSAGES = 20; // 10 exchanges (1 user + 1 assistant message each)
+const CONVERSATION_TTL_MS = 24 * 60 * 60 * 1000; // drop conversations idle longer than this
+const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // how often to sweep for stale ones
+
 function getHistory(key) {
   if (!conversations[key]) {
-    conversations[key] = [];
+    conversations[key] = { messages: [], lastActivity: Date.now() };
   }
 
-  return conversations[key];
+  return conversations[key].messages;
 }
+
+// Callers should use this instead of pushing onto the array returned by
+// getHistory() directly — it's the one place that enforces the history cap
+// and keeps lastActivity current for the inactivity cleanup below.
+function appendToHistory(key, message) {
+  if (!conversations[key]) {
+    conversations[key] = { messages: [], lastActivity: Date.now() };
+  }
+
+  const conversation = conversations[key];
+
+  conversation.messages.push(message);
+
+  if (conversation.messages.length > MAX_HISTORY_MESSAGES) {
+    conversation.messages.splice(0, conversation.messages.length - MAX_HISTORY_MESSAGES);
+  }
+
+  conversation.lastActivity = Date.now();
+}
+
+function cleanupStaleConversations() {
+  const now = Date.now();
+  let removedCount = 0;
+
+  for (const key of Object.keys(conversations)) {
+    if (now - conversations[key].lastActivity > CONVERSATION_TTL_MS) {
+      delete conversations[key];
+      removedCount++;
+    }
+  }
+
+  if (removedCount > 0) {
+    console.log(`[CONVERSATION CLEANUP] Removed ${removedCount} inactive conversation(s)`);
+  }
+}
+
+setInterval(cleanupStaleConversations, CONVERSATION_CLEANUP_INTERVAL_MS);
 
 // ---------------------------------------------------------------------
 // META WEBHOOK VERIFICATION
@@ -647,12 +688,12 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
     key
   });
 
-  history.push({
+  appendToHistory(key, {
     role: 'user',
     content: text
   });
 
-  history.push({
+  appendToHistory(key, {
     role: 'assistant',
     content: reply
   });
@@ -974,12 +1015,12 @@ app.post('/test-message', async (req, res) => {
       key
     });
 
-    history.push({
+    appendToHistory(key, {
       role: 'user',
       content: message
     });
 
-    history.push({
+    appendToHistory(key, {
       role: 'assistant',
       content: result.reply
     });
