@@ -1,3 +1,17 @@
+// Registered before anything else can run: a single unhandled error
+// anywhere in this process (any channel, any business, mid-payment or
+// not) would otherwise crash the whole app silently or in an inconsistent
+// state. Fail fast and loud instead, and let Railway restart cleanly.
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL UNCAUGHT] Uncaught exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL UNCAUGHT] Unhandled promise rejection:', reason);
+  process.exit(1);
+});
+
 require('dotenv').config({ override: true });
 
 const express = require('express');
