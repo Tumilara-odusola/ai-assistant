@@ -1113,114 +1113,6 @@ async function fetchDashboardData(businessId) {
   };
 }
 
-async function renderBookingsOrdersPage(businessId) {
-  const { businessName, bookings, orders } = await fetchDashboardData(businessId);
-
-  const bookingRows = bookings.map((booking) => `
-    <tr>
-      <td>${escapeHtml(booking.date)}</td>
-      <td>${escapeHtml(booking.time)}</td>
-      <td>${escapeHtml(booking.service)}</td>
-      <td>${escapeHtml(booking.customer_id)}</td>
-      <td>${escapeHtml(new Date(booking.created_at).toLocaleString())}</td>
-    </tr>`).join('');
-
-  const orderRows = orders.map((order) => `
-    <tr>
-      <td>${escapeHtml(order.product_name)}</td>
-      <td>${escapeHtml(order.quantity)}</td>
-      <td>${escapeHtml(order.price)}</td>
-      <td>${escapeHtml(order.customer_id)}</td>
-      <td>${escapeHtml(new Date(order.created_at).toLocaleString())}</td>
-    </tr>`).join('');
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>${escapeHtml(businessName)} Dashboard</title>
-<style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #f7f7f8;
-    color: #1a1a1a;
-    margin: 0;
-    padding: 40px;
-  }
-  h1 {
-    font-size: 22px;
-    margin: 0 0 24px;
-  }
-  h2 {
-    font-size: 18px;
-    margin: 0 0 16px;
-  }
-  section {
-    margin-bottom: 40px;
-  }
-  table {
-    border-collapse: collapse;
-    width: 100%;
-    max-width: 800px;
-    background: #fff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  }
-  th, td {
-    text-align: left;
-    padding: 10px 14px;
-    border-bottom: 1px solid #eee;
-    font-size: 14px;
-  }
-  th {
-    background: #fafafa;
-    font-weight: 600;
-    color: #555;
-  }
-  tr:last-child td {
-    border-bottom: none;
-  }
-  .empty {
-    color: #888;
-  }
-</style>
-</head>
-<body>
-<h1>${escapeHtml(businessName)}</h1>
-<section>
-<h2>Bookings</h2>
-${bookings.length === 0 ? '<p class="empty">No bookings yet.</p>' : `<table>
-  <thead>
-    <tr><th>Date</th><th>Time</th><th>Service</th><th>Customer</th><th>Booked At</th></tr>
-  </thead>
-  <tbody>${bookingRows}
-  </tbody>
-</table>`}
-</section>
-<section>
-<h2>Orders</h2>
-${orders.length === 0 ? '<p class="empty">No orders yet.</p>' : `<table>
-  <thead>
-    <tr><th>Product</th><th>Quantity</th><th>Price</th><th>Customer</th><th>Ordered At</th></tr>
-  </thead>
-  <tbody>${orderRows}
-  </tbody>
-</table>`}
-</section>
-</body>
-</html>`;
-}
-
-app.get('/dashboard', requireDashboardAuth, async (req, res) => {
-  const parsedBusinessId = parseInt(req.query.businessId, 10);
-  const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
-
-  res.type('html').send(await renderBookingsOrdersPage(businessId));
-});
-
-// ---------------------------------------------------------------------
-// TEMPORARY — dashboard visual redesign preview, no auth, for review only
-// ---------------------------------------------------------------------
-
 function getServicePrice(businessProfile, serviceName) {
   const service = businessProfile?.services?.find((s) => s.name === serviceName);
   return service ? Number(service.price) : 0;
@@ -1285,10 +1177,7 @@ function buildActivityRows(businessProfile, bookings, orders) {
   return [...bookingRows, ...orderRows].sort((a, b) => b.timestamp - a.timestamp);
 }
 
-app.get('/dashboard-preview', async (req, res) => {
-  const parsedBusinessId = parseInt(req.query.businessId, 10);
-  const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
-
+async function renderBookingsOrdersPage(businessId) {
   const { businessName, businessProfile, bookings, orders } =
     await fetchDashboardData(businessId);
 
@@ -1310,12 +1199,12 @@ app.get('/dashboard-preview', async (req, res) => {
       </div>
     </div>`).join('');
 
-  res.type('html').send(`<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(businessName)} — Dashboard Preview</title>
+<title>${escapeHtml(businessName)} Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1470,7 +1359,14 @@ app.get('/dashboard-preview', async (req, res) => {
   ${activity.length === 0 ? '<p class="empty">Nothing booked or ordered yet.</p>' : activityHtml}
 </div>
 </body>
-</html>`);
+</html>`;
+}
+
+app.get('/dashboard', requireDashboardAuth, async (req, res) => {
+  const parsedBusinessId = parseInt(req.query.businessId, 10);
+  const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
+
+  res.type('html').send(await renderBookingsOrdersPage(businessId));
 });
 
 app.get('/my-dashboard/:token', async (req, res) => {
