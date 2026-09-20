@@ -90,7 +90,8 @@ async function initDatabase() {
       dashboard_token TEXT UNIQUE,
       whatsapp_token TEXT,
       instagram_token TEXT,
-      twilio_phone_number TEXT UNIQUE
+      twilio_phone_number TEXT UNIQUE,
+      recovery_email TEXT
     )
   `);
 
@@ -201,6 +202,14 @@ async function initDatabase() {
   await pool.query(`
     ALTER TABLE businesses
     ADD COLUMN IF NOT EXISTS twilio_phone_number TEXT UNIQUE
+  `);
+
+  // Plaintext, unlike whatsapp_token/instagram_token — this needs a direct
+  // SQL WHERE match for the dashboard-link recovery flow, and it isn't a
+  // credential the way those tokens are.
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS recovery_email TEXT
   `);
 }
 
@@ -341,13 +350,14 @@ async function createBusiness({
   instagramAccountId,
   businessProfile,
   whatsappToken,
-  instagramToken
+  instagramToken,
+  recoveryEmail
 }) {
   const dashboardToken = crypto.randomBytes(24).toString('hex');
 
   const { rows } = await pool.query(
-    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile, dashboard_token, whatsapp_token, instagram_token)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile, dashboard_token, whatsapp_token, instagram_token, recovery_email)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
       name,
@@ -356,11 +366,21 @@ async function createBusiness({
       JSON.stringify(businessProfile),
       dashboardToken,
       encryptToken(whatsappToken || null),
-      encryptToken(instagramToken || null)
+      encryptToken(instagramToken || null),
+      recoveryEmail || null
     ]
   );
 
   return decryptBusinessRow(rows[0]);
+}
+
+async function updateBusiness(id, { name, businessProfile }) {
+  const { rows } = await pool.query(
+    `UPDATE businesses SET name = $1, business_profile = $2 WHERE id = $3 RETURNING *`,
+    [name, JSON.stringify(businessProfile), id]
+  );
+
+  return decryptBusinessRow(rows[0]) || null;
 }
 
 async function getBusinessByDashboardToken(token) {
@@ -381,6 +401,15 @@ async function getBusinessById(id) {
   return decryptBusinessRow(rows[0]) || null;
 }
 
+async function getBusinessByName(name) {
+  const { rows } = await pool.query(
+    'SELECT * FROM businesses WHERE LOWER(name) = LOWER($1) LIMIT 1',
+    [name]
+  );
+
+  return decryptBusinessRow(rows[0]) || null;
+}
+
 module.exports = {
   pool,
   initDatabase,
@@ -390,5 +419,7 @@ module.exports = {
   getBusinessByDashboardToken,
   getBusinessById,
   getBusinessByTwilioPhoneNumber,
-  createBusiness
+  getBusinessByName,
+  createBusiness,
+  updateBusiness
 };

@@ -18,7 +18,9 @@ const {
   getBusinessByInstagramAccountId,
   getBusinessByDashboardToken,
   getBusinessById,
-  createBusiness
+  getBusinessByName,
+  createBusiness,
+  updateBusiness
 } = require('./db');
 const { setupVoiceWebSocket } = require('./voice');
 
@@ -1369,34 +1371,421 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
   res.type('html').send(await renderBookingsOrdersPage(businessId));
 });
 
-app.get('/my-dashboard/:token', async (req, res) => {
-  const business = await getBusinessByDashboardToken(req.params.token);
-
-  if (!business) {
-    return res.status(404).type('html').send(`<!DOCTYPE html>
+function renderNotFoundPage(title, message) {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Dashboard Not Found</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+  }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #f7f7f8;
-    color: #1a1a1a;
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
     margin: 0;
-    padding: 60px 20px;
+    padding: 80px 20px;
     text-align: center;
+  }
+  h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 12px;
+  }
+  p {
+    color: var(--muted);
+    font-size: 14px;
   }
 </style>
 </head>
 <body>
-<h1>Dashboard not found</h1>
-<p>This link isn't valid. Double-check the URL you were given.</p>
+<h1>${escapeHtml(title)}</h1>
+<p>${escapeHtml(message)}</p>
 </body>
-</html>`);
+</html>`;
+}
+
+app.get('/my-dashboard/:token', async (req, res) => {
+  const business = await getBusinessByDashboardToken(req.params.token);
+
+  if (!business) {
+    return res.status(404).type('html').send(
+      renderNotFoundPage('Dashboard not found', "This link isn't valid. Double-check the URL you were given.")
+    );
   }
 
   res.type('html').send(await renderBookingsOrdersPage(business.id));
+});
+
+// ---------------------------------------------------------------------
+// SELF-SERVICE BUSINESS SETTINGS
+// ---------------------------------------------------------------------
+
+function channelStatusHtml(label, isConnected) {
+  return `
+    <div class="channel-row">
+      <span class="channel-label">${escapeHtml(label)}</span>
+      <span class="channel-status ${isConnected ? 'connected' : 'disconnected'}">${isConnected ? 'Connected' : 'Not connected'}</span>
+    </div>`;
+}
+
+function renderSettingsForm({ token, business, values, errors, saved }) {
+  const v = values || {};
+  const errs = errors || [];
+
+  const serviceNames = toArray(v.serviceName).length ? toArray(v.serviceName) : [''];
+  const servicePrices = toArray(v.servicePrice);
+  const serviceDurations = toArray(v.serviceDuration);
+  const productNames = toArray(v.productName).length ? toArray(v.productName) : [''];
+  const productPrices = toArray(v.productPrice);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings — ${escapeHtml(business.name)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+    --accent: #D4A257;
+    --alert: #8B3A3A;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 40px 20px 80px;
+  }
+  form {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(22px, 5vw, 28px);
+    font-weight: 700;
+    margin: 0 0 28px;
+  }
+  h2 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 18px;
+    font-weight: 700;
+    margin: 36px 0 16px;
+    border-top: 2px solid var(--text);
+    padding-top: 24px;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 18px 0 6px;
+  }
+  input[type="text"],
+  input[type="number"] {
+    width: 100%;
+    padding: 8px 0;
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    color: var(--text);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(26, 46, 43, 0.25);
+    border-radius: 0;
+  }
+  input[type="text"]:focus,
+  input[type="number"]:focus {
+    outline: none;
+    border-bottom-color: var(--accent);
+  }
+  .day-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 10px 0;
+  }
+  .day-row label {
+    width: 100px;
+    margin: 0;
+    flex-shrink: 0;
+  }
+  .row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .row input {
+    flex: 1;
+  }
+  .remove-row {
+    background: none;
+    border: 1px solid rgba(26, 46, 43, 0.25);
+    border-radius: 3px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .add-row {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  .errors {
+    background: rgba(139, 58, 58, 0.08);
+    border: 1px solid var(--alert);
+    color: var(--alert);
+    padding: 14px 16px;
+    border-radius: 4px;
+    margin-bottom: 24px;
+    font-size: 13px;
+  }
+  .errors ul {
+    margin: 4px 0 0;
+    padding-left: 18px;
+  }
+  .saved-banner {
+    background: rgba(212, 162, 87, 0.12);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin-bottom: 24px;
+    font-size: 13px;
+  }
+  .channel-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(26, 46, 43, 0.14);
+    font-size: 14px;
+  }
+  .channel-status {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .channel-status.connected {
+    color: var(--accent);
+  }
+  .channel-status.disconnected {
+    color: var(--muted);
+  }
+  button[type="submit"] {
+    width: 100%;
+    margin-top: 36px;
+    padding: 14px;
+    background: var(--text);
+    color: var(--bg);
+    border: none;
+    border-radius: 4px;
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<form method="POST" action="/my-dashboard/${escapeHtml(token)}/settings">
+<h1>${escapeHtml(business.name)} — Settings</h1>
+
+${saved ? '<div class="saved-banner">Saved!</div>' : ''}
+${errs.length > 0 ? `<div class="errors"><strong>Please fix the following:</strong><ul>${errs.map((e) => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : ''}
+
+<h2>Connected Channels</h2>
+${channelStatusHtml('WhatsApp', Boolean(business.whatsapp_phone_number_id))}
+${channelStatusHtml('Instagram', Boolean(business.instagram_account_id))}
+${channelStatusHtml('Voice', Boolean(business.twilio_phone_number))}
+
+<label for="businessName">Business name</label>
+<input type="text" id="businessName" name="businessName" value="${escapeHtml(v.businessName || '')}">
+
+<h2>Business hours</h2>
+${Object.keys(DAY_FIELD_NAMES).map((day) => `
+  <div class="day-row">
+    <label for="${DAY_FIELD_NAMES[day]}">${DAY_LABELS[day]}</label>
+    <input type="text" id="${DAY_FIELD_NAMES[day]}" name="${DAY_FIELD_NAMES[day]}" placeholder="9:00-19:00 or closed" value="${escapeHtml(v[DAY_FIELD_NAMES[day]] || '')}">
+  </div>`).join('')}
+
+<h2>Services</h2>
+<div id="services-container">
+${renderOfferingRows('service', serviceNames, servicePrices, serviceDurations)}
+</div>
+<button type="button" class="add-row" onclick="addRow('service-row-template','services-container')">+ Add another service</button>
+
+<h2>Products</h2>
+<div id="products-container">
+${renderOfferingRows('product', productNames, productPrices, null)}
+</div>
+<button type="button" class="add-row" onclick="addRow('product-row-template','products-container')">+ Add another product</button>
+
+<button type="submit">Save Changes</button>
+</form>
+
+<template id="service-row-template">
+  <div class="row">
+    <input type="text" name="serviceName[]" placeholder="Name">
+    <input type="number" name="servicePrice[]" placeholder="Price" min="0" step="0.01">
+    <input type="number" name="serviceDuration[]" placeholder="Duration (min)" min="1" step="1">
+    <button type="button" class="remove-row" onclick="this.parentElement.remove()">Remove</button>
+  </div>
+</template>
+
+<template id="product-row-template">
+  <div class="row">
+    <input type="text" name="productName[]" placeholder="Name">
+    <input type="number" name="productPrice[]" placeholder="Price" min="0" step="0.01">
+    <button type="button" class="remove-row" onclick="this.parentElement.remove()">Remove</button>
+  </div>
+</template>
+
+<script>
+  function addRow(templateId, containerId) {
+    var template = document.getElementById(templateId);
+    var container = document.getElementById(containerId);
+    container.appendChild(template.content.cloneNode(true));
+  }
+</script>
+</body>
+</html>`;
+}
+
+function businessProfileToFormValues(businessProfile) {
+  const values = { businessName: businessProfile.businessName };
+
+  for (const day of Object.keys(DAY_FIELD_NAMES)) {
+    values[DAY_FIELD_NAMES[day]] = businessProfile.hours?.[day] || '';
+  }
+
+  const services = businessProfile.services || [];
+  values.serviceName = services.map((s) => s.name);
+  values.servicePrice = services.map((s) => s.price);
+  values.serviceDuration = services.map((s) => s.durationMinutes);
+
+  const products = businessProfile.products || [];
+  values.productName = products.map((p) => p.name);
+  values.productPrice = products.map((p) => p.price);
+
+  return values;
+}
+
+app.get('/my-dashboard/:token/settings', async (req, res) => {
+  const business = await getBusinessByDashboardToken(req.params.token);
+
+  if (!business) {
+    return res.status(404).type('html').send(
+      renderNotFoundPage('Dashboard not found', "This link isn't valid. Double-check the URL you were given.")
+    );
+  }
+
+  res.type('html').send(renderSettingsForm({
+    token: req.params.token,
+    business,
+    values: businessProfileToFormValues(business.business_profile),
+    errors: [],
+    saved: req.query.saved === 'true'
+  }));
+});
+
+app.post('/my-dashboard/:token/settings', async (req, res) => {
+  const business = await getBusinessByDashboardToken(req.params.token);
+
+  if (!business) {
+    return res.status(404).type('html').send(
+      renderNotFoundPage('Dashboard not found', "This link isn't valid. Double-check the URL you were given.")
+    );
+  }
+
+  const body = req.body || {};
+  const businessName = (body.businessName || '').trim();
+
+  const hours = {};
+
+  for (const day of Object.keys(DAY_FIELD_NAMES)) {
+    const raw = (body[DAY_FIELD_NAMES[day]] || '').trim();
+    hours[day] = raw || 'closed';
+  }
+
+  const { rows: services, errors: serviceErrors } = parseOfferingRows(
+    toArray(body.serviceName),
+    toArray(body.servicePrice),
+    toArray(body.serviceDuration)
+  );
+
+  const { rows: products, errors: productErrors } = parseOfferingRows(
+    toArray(body.productName),
+    toArray(body.productPrice),
+    null
+  );
+
+  const updatedProfile = {
+    ...business.business_profile,
+    businessName,
+    hours,
+    services,
+    products
+  };
+
+  const errors = [
+    ...serviceErrors,
+    ...productErrors,
+    ...validateNewBusinessPayload({ name: businessName, businessProfile: updatedProfile })
+  ];
+
+  if (errors.length > 0) {
+    return res.status(400).type('html').send(renderSettingsForm({
+      token: req.params.token,
+      business,
+      values: body,
+      errors,
+      saved: false
+    }));
+  }
+
+  try {
+    await updateBusiness(business.id, { name: businessName, businessProfile: updatedProfile });
+
+    return res.redirect(`/my-dashboard/${req.params.token}/settings?saved=true`);
+  } catch (err) {
+    console.error('[UPDATE BUSINESS ERROR]', err);
+
+    return res.status(500).type('html').send(renderSettingsForm({
+      token: req.params.token,
+      business,
+      values: body,
+      errors: ['Something went wrong saving your changes — please try again.'],
+      saved: false
+    }));
+  }
 });
 
 // ---------------------------------------------------------------------
@@ -1446,7 +1835,7 @@ app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
     return res.status(400).json({ errors });
   }
 
-  const { name, whatsappPhoneNumberId, instagramAccountId, businessProfile, whatsappToken, instagramToken } = req.body;
+  const { name, whatsappPhoneNumberId, instagramAccountId, businessProfile, whatsappToken, instagramToken, recoveryEmail } = req.body;
 
   try {
     const business = await createBusiness({
@@ -1455,7 +1844,8 @@ app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
       instagramAccountId,
       businessProfile,
       whatsappToken,
-      instagramToken
+      instagramToken,
+      recoveryEmail
     });
 
     return res.status(201).json(business);
@@ -1735,6 +2125,10 @@ ${errs.length > 0 ? `<div class="errors"><strong>Please fix the following:</stro
 <label for="businessName">Business name</label>
 <input type="text" id="businessName" name="businessName" value="${escapeHtml(v.businessName || '')}">
 
+<label for="recoveryEmail">Recovery email (optional)</label>
+<input type="text" id="recoveryEmail" name="recoveryEmail" value="${escapeHtml(v.recoveryEmail || '')}">
+<p class="hint">If you ever lose your dashboard link, we can help you find it again using your business name and this email. Recommended, but optional.</p>
+
 <label for="whatsappPhoneNumberId">WhatsApp phone number ID (optional)</label>
 <input type="text" id="whatsappPhoneNumberId" name="whatsappPhoneNumberId" value="${escapeHtml(v.whatsappPhoneNumberId || '')}">
 <p class="hint">Found in your Meta Developer dashboard under WhatsApp → API Setup.</p>
@@ -1894,6 +2288,7 @@ app.post('/onboard', async (req, res) => {
   const instagramAccountId = (body.instagramAccountId || '').trim();
   const whatsappToken = (body.whatsappToken || '').trim();
   const instagramToken = (body.instagramToken || '').trim();
+  const recoveryEmail = (body.recoveryEmail || '').trim();
 
   const hours = {};
 
@@ -1941,7 +2336,8 @@ app.post('/onboard', async (req, res) => {
       instagramAccountId: instagramAccountId || null,
       businessProfile,
       whatsappToken: whatsappToken || null,
-      instagramToken: instagramToken || null
+      instagramToken: instagramToken || null,
+      recoveryEmail: recoveryEmail || null
     });
 
     const dashboardUrl = `${req.protocol}://${req.get('host')}/my-dashboard/${business.dashboard_token}`;
@@ -1968,16 +2364,191 @@ app.post('/onboard', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove after deleting the test business
+// DASHBOARD LINK RECOVERY
 // ---------------------------------------------------------------------
 
-app.post('/debug-delete-business/:id', requireDashboardAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    'DELETE FROM businesses WHERE id = $1 RETURNING id, name',
-    [parseInt(req.params.id, 10)]
-  );
+function renderRecoverForm({ values, result }) {
+  const v = values || {};
 
-  res.json(rows[0] || null);
+  let resultHtml = '';
+
+  if (result?.type === 'success') {
+    resultHtml = `<div class="result success">
+      <p><strong>Found it!</strong> Here's your dashboard link:</p>
+      <div class="link-box"><a href="${escapeHtml(result.dashboardUrl)}">${escapeHtml(result.dashboardUrl)}</a></div>
+    </div>`;
+  } else if (result?.type === 'no_recovery_email') {
+    resultHtml = `<div class="result alert">
+      <p>We found a business with that name, but no recovery email was ever set up for it. There's no automatic way to recover this link — please contact us directly for help.</p>
+    </div>`;
+  } else if (result?.type === 'not_found') {
+    resultHtml = `<div class="result alert">
+      <p>We couldn't find a match for that business name and email. Double-check both and try again.</p>
+    </div>`;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recover Dashboard Link</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+    --accent: #D4A257;
+    --alert: #8B3A3A;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 40px 20px 80px;
+  }
+  .page {
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(20px, 5vw, 24px);
+    font-weight: 700;
+    margin: 0 0 12px;
+  }
+  p.intro {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0 0 20px;
+  }
+  .disclosure {
+    background: rgba(74, 93, 87, 0.08);
+    border: 1px solid rgba(26, 46, 43, 0.2);
+    color: var(--muted);
+    padding: 12px 16px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.5;
+    margin-bottom: 28px;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 18px 0 6px;
+  }
+  input[type="text"] {
+    width: 100%;
+    padding: 8px 0;
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    color: var(--text);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(26, 46, 43, 0.25);
+  }
+  input[type="text"]:focus {
+    outline: none;
+    border-bottom-color: var(--accent);
+  }
+  button[type="submit"] {
+    width: 100%;
+    margin-top: 32px;
+    padding: 14px;
+    background: var(--text);
+    color: var(--bg);
+    border: none;
+    border-radius: 4px;
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .result {
+    margin-top: 28px;
+    padding: 14px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .result.success {
+    background: rgba(212, 162, 87, 0.12);
+    border: 1px solid var(--accent);
+  }
+  .result.alert {
+    background: rgba(139, 58, 58, 0.08);
+    border: 1px solid var(--alert);
+    color: var(--alert);
+  }
+  .link-box {
+    margin-top: 8px;
+    word-break: break-all;
+  }
+  .link-box a {
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Recover Your Dashboard Link</h1>
+  <p class="intro">Enter your business name and recovery email to look up your dashboard link.</p>
+
+  <div class="disclosure">
+    <strong>Note:</strong> this isn't a secure password reset — anyone who knows your business name and recovery email can retrieve this link. If that's a concern, contact us directly instead.
+  </div>
+
+  <form method="POST" action="/recover-dashboard-link">
+    <label for="businessName">Business name</label>
+    <input type="text" id="businessName" name="businessName" value="${escapeHtml(v.businessName || '')}">
+
+    <label for="recoveryEmail">Recovery email</label>
+    <input type="text" id="recoveryEmail" name="recoveryEmail" value="${escapeHtml(v.recoveryEmail || '')}">
+
+    <button type="submit">Find My Dashboard</button>
+  </form>
+
+  ${resultHtml}
+</div>
+</body>
+</html>`;
+}
+
+app.get('/recover-dashboard-link', (req, res) => {
+  res.type('html').send(renderRecoverForm({ values: {}, result: null }));
+});
+
+app.post('/recover-dashboard-link', async (req, res) => {
+  const body = req.body || {};
+  const businessName = (body.businessName || '').trim();
+  const recoveryEmail = (body.recoveryEmail || '').trim();
+
+  const business = businessName ? await getBusinessByName(businessName) : null;
+
+  let result;
+
+  if (!business) {
+    result = { type: 'not_found' };
+  } else if (!business.recovery_email) {
+    result = { type: 'no_recovery_email' };
+  } else if (business.recovery_email.trim().toLowerCase() !== recoveryEmail.toLowerCase()) {
+    result = { type: 'not_found' };
+  } else {
+    const dashboardUrl = `${req.protocol}://${req.get('host')}/my-dashboard/${business.dashboard_token}`;
+    result = { type: 'success', dashboardUrl };
+  }
+
+  res.type('html').send(renderRecoverForm({ values: body, result }));
 });
 
 // ---------------------------------------------------------------------
