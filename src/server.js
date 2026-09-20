@@ -2552,29 +2552,6 @@ app.post('/recover-dashboard-link', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// TEMPORARY DEBUG ROUTE — remove after diagnosing the recovery bug
-// ---------------------------------------------------------------------
-
-app.get('/debug-recovery-check', requireDashboardAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    'SELECT id, name, recovery_email IS NOT NULL AS has_recovery_email FROM businesses ORDER BY id'
-  );
-
-  const testName = req.query.name || 'Example Barbershop';
-  const lookupResult = await getBusinessByName(testName);
-
-  res.json({
-    allBusinesses: rows,
-    testLookup: {
-      searchedName: testName,
-      found: Boolean(lookupResult),
-      matchedName: lookupResult?.name || null,
-      hasRecoveryEmail: lookupResult ? Boolean(lookupResult.recovery_email) : null
-    }
-  });
-});
-
-// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
