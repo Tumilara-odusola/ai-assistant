@@ -205,6 +205,7 @@ app.post(
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // Fallback business used only where there's no real webhook payload to look
 // up a business from — the /test-message endpoint and the (unimplemented)
@@ -225,6 +226,26 @@ function formatDateYYYYMMDD(date) {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+// Shared PWA <head> tags + service worker registration, included on the
+// pages a user would plausibly install (landing, dashboards, settings).
+// Static manifest/icons only — see service-worker.js for what it does and
+// doesn't cache.
+const PWA_HEAD_TAGS = `
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1A2E2B">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">`;
+
+const PWA_REGISTRATION_SCRIPT = `
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service-worker.js').catch((err) => {
+        console.error('Service worker registration failed:', err);
+      });
+    });
+  }
+</script>`;
 
 const BOOKING_CONFIRMED_REGEX =
   /\n?\[BOOKING_CONFIRMED:\s*date=([^,]+),\s*time=([^,]+),\s*service=([^\]]+)\]\s*$/;
@@ -1284,6 +1305,7 @@ app.get('/', (req, res) => {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Autumn Assistant</title>
+${PWA_HEAD_TAGS}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1446,6 +1468,7 @@ app.get('/', (req, res) => {
     <p>Contact: <a href="mailto:autumnhqapp@gmail.com">autumnhqapp@gmail.com</a></p>
   </footer>
 </div>
+${PWA_REGISTRATION_SCRIPT}
 </body>
 </html>`);
 });
@@ -1668,6 +1691,7 @@ async function renderBookingsOrdersPage(businessId, { requestOrigin, isAdminView
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(businessName)} Dashboard</title>
+${PWA_HEAD_TAGS}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1892,6 +1916,7 @@ async function renderBookingsOrdersPage(businessId, { requestOrigin, isAdminView
   <p class="section-label">Activity</p>
   ${activity.length === 0 ? '<p class="empty">Nothing booked or ordered yet.</p>' : activityHtml}
 </div>
+${PWA_REGISTRATION_SCRIPT}
 </body>
 </html>`;
 }
@@ -2175,6 +2200,7 @@ function renderSettingsForm({ token, business, values, errors, saved }) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Settings — ${escapeHtml(business.name)}</title>
+${PWA_HEAD_TAGS}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2421,6 +2447,7 @@ ${renderOfferingRows('product', productNames, productPrices, null)}
     container.appendChild(template.content.cloneNode(true));
   }
 </script>
+${PWA_REGISTRATION_SCRIPT}
 </body>
 </html>`;
 }

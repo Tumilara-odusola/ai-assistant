@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline — Autumn Assistant</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1A2E2B">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+    --accent: #D4A257;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 32px 20px;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .page {
+    max-width: 400px;
+  }
+  h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(22px, 5vw, 28px);
+    font-weight: 700;
+    margin: 0 0 12px;
+  }
+  p {
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.5;
+    margin: 0 0 24px;
+  }
+  button {
+    background: var(--text);
+    color: var(--bg);
+    border: none;
+    border-radius: 4px;
+    padding: 12px 24px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>You're offline</h1>
+  <p>Autumn Assistant needs a connection to show live bookings and orders. Reconnect and try again.</p>
+  <button onclick="location.reload()">Retry</button>
+</div>
+</body>
+</html>
