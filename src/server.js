@@ -2945,6 +2945,19 @@ app.post('/recover-dashboard-link', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
+// TEMPORARY DEBUG ROUTE — remove after checking escalated_conversations
+// ---------------------------------------------------------------------
+
+app.get('/debug-escalations/:businessId', requireDashboardAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT * FROM escalated_conversations WHERE business_id = $1 ORDER BY created_at DESC',
+    [req.params.businessId]
+  );
+
+  res.json(rows);
+});
+
+// ---------------------------------------------------------------------
 // START SERVER
 // ---------------------------------------------------------------------
 
