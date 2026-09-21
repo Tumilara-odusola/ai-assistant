@@ -228,6 +228,18 @@ async function initDatabase() {
     ALTER TABLE businesses
     ADD COLUMN IF NOT EXISTS facebook_page_token TEXT
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS escalated_conversations (
+      id SERIAL PRIMARY KEY,
+      business_id INTEGER REFERENCES businesses(id),
+      platform TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      message_text TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      resolved BOOLEAN DEFAULT false
+    )
+  `);
 }
 
 // Generates a dashboard_token for any business row that doesn't have one
@@ -413,6 +425,35 @@ async function updateBusiness(id, { name, businessProfile }) {
   return decryptBusinessRow(rows[0]) || null;
 }
 
+async function createEscalation({ businessId, platform, senderId, messageText }) {
+  await pool.query(
+    `INSERT INTO escalated_conversations (business_id, platform, sender_id, message_text)
+     VALUES ($1, $2, $3, $4)`,
+    [businessId, platform, senderId, messageText]
+  );
+}
+
+async function getUnresolvedEscalations(businessId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM escalated_conversations WHERE business_id = $1 AND resolved = false ORDER BY created_at DESC',
+    [businessId]
+  );
+
+  return rows;
+}
+
+// Scoped by business_id, not just id — critical for the token-based route,
+// which must never let one business's token resolve another business's
+// escalation just by guessing/incrementing the id in the URL.
+async function resolveEscalation(id, businessId) {
+  const { rows } = await pool.query(
+    'UPDATE escalated_conversations SET resolved = true WHERE id = $1 AND business_id = $2 RETURNING *',
+    [id, businessId]
+  );
+
+  return rows[0] || null;
+}
+
 async function getBusinessByDashboardToken(token) {
   const { rows } = await pool.query(
     'SELECT * FROM businesses WHERE dashboard_token = $1',
@@ -452,5 +493,8 @@ module.exports = {
   getBusinessByName,
   getBusinessByFacebookPageId,
   createBusiness,
-  updateBusiness
+  updateBusiness,
+  createEscalation,
+  getUnresolvedEscalations,
+  resolveEscalation
 };

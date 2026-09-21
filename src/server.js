@@ -35,7 +35,10 @@ const {
   getBusinessByName,
   getBusinessByFacebookPageId,
   createBusiness,
-  updateBusiness
+  updateBusiness,
+  createEscalation,
+  getUnresolvedEscalations,
+  resolveEscalation
 } = require('./db');
 const { setupVoiceWebSocket } = require('./voice');
 
@@ -767,6 +770,17 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
     console.log(
       `[NEEDS HUMAN REVIEW] ${key}: "${text}"`
     );
+
+    try {
+      await createEscalation({
+        businessId,
+        platform,
+        senderId,
+        messageText: text
+      });
+    } catch (err) {
+      console.error('[ESCALATION INSERT ERROR]', err);
+    }
   }
 
   const delay = computeTypingDelayMs(reply);
@@ -1393,7 +1407,7 @@ function buildActivityRows(businessProfile, bookings, orders) {
   return [...bookingRows, ...orderRows].sort((a, b) => b.timestamp - a.timestamp);
 }
 
-async function renderBookingsOrdersPage(businessId, { requestOrigin } = {}) {
+async function renderBookingsOrdersPage(businessId, { requestOrigin, isAdminView } = {}) {
   const { businessName, businessProfile, dashboardToken, bookings, orders } =
     await fetchDashboardData(businessId);
 
@@ -1401,10 +1415,32 @@ async function renderBookingsOrdersPage(businessId, { requestOrigin } = {}) {
   const todayDate = formatDateYYYYMMDD(new Date());
   const summary = computeTodaySummary(businessProfile, bookings, orders, todayDate);
   const activity = buildActivityRows(businessProfile, bookings, orders);
+  const escalations = await getUnresolvedEscalations(businessId);
 
   const dashboardUrl = requestOrigin && dashboardToken
     ? `${requestOrigin}/my-dashboard/${dashboardToken}`
     : null;
+
+  function resolveEscalationUrl(escalationId) {
+    return isAdminView
+      ? `/dashboard/resolve-escalation/${escalationId}?businessId=${businessId}`
+      : `/my-dashboard/${dashboardToken}/resolve-escalation/${escalationId}`;
+  }
+
+  const escalationsHtml = escalations.length > 0 ? `
+  <section class="escalations-section">
+    <p class="section-label alert-label">⚠ Needs Human Attention</p>
+    ${escalations.map((esc) => `
+    <div class="escalation-row">
+      <div class="escalation-main">
+        <div class="escalation-meta">${escapeHtml(esc.platform)}:${escapeHtml(esc.sender_id)} · ${escapeHtml(new Date(esc.created_at).toLocaleString())}</div>
+        <div class="escalation-message">"${escapeHtml(esc.message_text)}"</div>
+      </div>
+      <form method="POST" action="${escapeHtml(resolveEscalationUrl(esc.id))}">
+        <button type="submit" class="resolve-button">Mark Resolved</button>
+      </form>
+    </div>`).join('')}
+  </section>` : '';
 
   const activityHtml = activity.map((row) => `
     <div class="row">
@@ -1565,6 +1601,45 @@ async function renderBookingsOrdersPage(businessId, { requestOrigin } = {}) {
     padding: 24px 0;
     font-size: 14px;
   }
+  .escalations-section {
+    margin-bottom: 32px;
+  }
+  .alert-label {
+    color: var(--alert);
+  }
+  .escalation-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    background: rgba(139, 58, 58, 0.08);
+    border: 1px solid var(--alert);
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+  }
+  .escalation-meta {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .escalation-message {
+    font-size: 14px;
+    color: var(--text);
+  }
+  .resolve-button {
+    background: none;
+    border: 1px solid var(--alert);
+    color: var(--alert);
+    border-radius: 3px;
+    padding: 8px 14px;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
   @media (min-width: 700px) {
     body {
       padding: 56px 20px 100px;
@@ -1576,6 +1651,8 @@ async function renderBookingsOrdersPage(businessId, { requestOrigin } = {}) {
 <div class="page">
   <p class="eyebrow">Today</p>
   <h1>${escapeHtml(businessName)}</h1>
+
+  ${escalationsHtml}
 
   ${dashboardUrl ? `<div class="admin-link-section">
     <p class="section-label">Business Dashboard Link</p>
@@ -1606,7 +1683,17 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
 
   const requestOrigin = `${req.protocol}://${req.get('host')}`;
 
-  res.type('html').send(await renderBookingsOrdersPage(businessId, { requestOrigin }));
+  res.type('html').send(await renderBookingsOrdersPage(businessId, { requestOrigin, isAdminView: true }));
+});
+
+app.post('/dashboard/resolve-escalation/:id', requireDashboardAuth, async (req, res) => {
+  const parsedBusinessId = parseInt(req.query.businessId, 10);
+  const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
+  const escalationId = parseInt(req.params.id, 10);
+
+  await resolveEscalation(escalationId, businessId);
+
+  res.redirect(`/dashboard?businessId=${businessId}`);
 });
 
 function renderNotFoundPage(title, message) {
@@ -1662,6 +1749,22 @@ app.get('/my-dashboard/:token', async (req, res) => {
   }
 
   res.type('html').send(await renderBookingsOrdersPage(business.id));
+});
+
+app.post('/my-dashboard/:token/resolve-escalation/:id', async (req, res) => {
+  const business = await getBusinessByDashboardToken(req.params.token);
+
+  if (!business) {
+    return res.status(404).type('html').send(
+      renderNotFoundPage('Dashboard not found', "This link isn't valid. Double-check the URL you were given.")
+    );
+  }
+
+  const escalationId = parseInt(req.params.id, 10);
+
+  await resolveEscalation(escalationId, business.id);
+
+  res.redirect(`/my-dashboard/${req.params.token}`);
 });
 
 // ---------------------------------------------------------------------
