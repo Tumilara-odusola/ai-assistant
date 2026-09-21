@@ -39,7 +39,11 @@ const {
   updateBusiness,
   createEscalation,
   getUnresolvedEscalations,
-  resolveEscalation
+  resolveEscalation,
+  createAdminSession,
+  getAdminSessionByToken,
+  deleteAdminSession,
+  cleanupExpiredAdminSessions
 } = require('./db');
 const { setupVoiceWebSocket } = require('./voice');
 
@@ -445,6 +449,14 @@ function cleanupStaleConversations() {
 }
 
 setInterval(cleanupStaleConversations, CONVERSATION_CLEANUP_INTERVAL_MS);
+
+const ADMIN_SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // how often to sweep for expired sessions
+
+setInterval(() => {
+  cleanupExpiredAdminSessions().catch((err) => {
+    console.error('[ADMIN SESSION CLEANUP ERROR]', err);
+  });
+}, ADMIN_SESSION_CLEANUP_INTERVAL_MS);
 
 async function processMetaWebhook(body) {
   const entries = body.entry || [];
@@ -1503,21 +1515,35 @@ function timingSafePasswordEqual(a, b) {
   return crypto.timingSafeEqual(hashA, hashB);
 }
 
-function requireDashboardAuth(req, res, next) {
+// Shared by requireDashboardAuth (Basic Auth, for the HTML pages) and
+// POST /api/auth/login (JSON, for the mobile app) — one credential check,
+// two different ways of presenting it to the caller.
+function verifyDashboardCredentials(providedUser, providedPassword) {
   const expectedUser = process.env.DASHBOARD_USER;
   const expectedPassword = process.env.DASHBOARD_PASSWORD;
-
-  const sendAuthRequired = () => {
-    res.set('WWW-Authenticate', 'Basic realm="Dashboard"');
-    return res.sendStatus(401);
-  };
 
   if (!expectedUser || !expectedPassword) {
     console.error(
       '[DASHBOARD AUTH] DASHBOARD_USER or DASHBOARD_PASSWORD not set'
     );
-    return sendAuthRequired();
+    return false;
   }
+
+  if (typeof providedUser !== 'string' || typeof providedPassword !== 'string') {
+    return false;
+  }
+
+  return (
+    providedUser === expectedUser &&
+    timingSafePasswordEqual(providedPassword, expectedPassword)
+  );
+}
+
+function requireDashboardAuth(req, res, next) {
+  const sendAuthRequired = () => {
+    res.set('WWW-Authenticate', 'Basic realm="Dashboard"');
+    return res.sendStatus(401);
+  };
 
   const authHeader = req.headers.authorization || '';
   const [scheme, encoded] = authHeader.split(' ');
@@ -1536,11 +1562,25 @@ function requireDashboardAuth(req, res, next) {
   const providedUser = decoded.slice(0, separatorIndex);
   const providedPassword = decoded.slice(separatorIndex + 1);
 
-  if (
-    providedUser !== expectedUser ||
-    !timingSafePasswordEqual(providedPassword, expectedPassword)
-  ) {
+  if (!verifyDashboardCredentials(providedUser, providedPassword)) {
     return sendAuthRequired();
+  }
+
+  next();
+}
+
+async function requireApiAuth(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const [scheme, token] = authHeader.split(' ');
+
+  if (scheme !== 'Bearer' || !token) {
+    return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+  }
+
+  const session = await getAdminSessionByToken(token);
+
+  if (!session) {
+    return res.status(401).json({ error: 'Invalid or expired session token' });
   }
 
   next();
@@ -3346,6 +3386,207 @@ app.post('/recover-dashboard-link', async (req, res) => {
   }
 
   res.type('html').send(renderRecoverForm({ values: body, result }));
+});
+
+// ---------------------------------------------------------------------
+// JSON REST API (foundation for a future React Native / Expo app)
+// Runs alongside the HTML pages above — same data, same auth model
+// (the single global admin identity), just JSON instead of rendered
+// HTML. See requireApiAuth / verifyDashboardCredentials above.
+// ---------------------------------------------------------------------
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+
+  if (!verifyDashboardCredentials(username, password)) {
+    return res.status(401).json({ error: 'Invalid username or password' });
+  }
+
+  const { token, expiresAt } = await createAdminSession();
+  res.status(200).json({ token, expiresAt });
+});
+
+app.post('/api/auth/logout', requireApiAuth, async (req, res) => {
+  const [, token] = req.headers.authorization.split(' ');
+  await deleteAdminSession(token);
+  res.sendStatus(204);
+});
+
+app.get('/api/businesses/:id/dashboard', requireApiAuth, async (req, res) => {
+  const businessId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(businessId)) {
+    return res.status(400).json({ error: 'businessId must be an integer' });
+  }
+
+  const { businessName, businessProfile, bookings, orders } =
+    await fetchDashboardData(businessId);
+
+  if (!businessProfile) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  const currency = businessProfile?.currency || 'NGN';
+  const todayDate = formatDateYYYYMMDD(new Date());
+  const summary = computeTodaySummary(businessProfile, bookings, orders, todayDate);
+  const activity = buildActivityRows(businessProfile, bookings, orders);
+  const escalations = await getUnresolvedEscalations(businessId);
+
+  res.status(200).json({
+    businessId,
+    businessName,
+    today: {
+      bookingsCount: summary.bookingsCount,
+      revenue: summary.revenue,
+      currency
+    },
+    activity: activity.map((row) => ({
+      type: row.type,
+      title: row.title,
+      customer: row.customer,
+      amount: row.amount,
+      status: row.status,
+      timestamp: row.timestamp
+    })),
+    escalations: escalations.map((esc) => ({
+      id: esc.id,
+      platform: esc.platform,
+      senderId: esc.sender_id,
+      messageText: esc.message_text,
+      createdAt: esc.created_at
+    }))
+  });
+});
+
+function businessToSettingsJson(business) {
+  const profile = business.business_profile || {};
+
+  return {
+    id: business.id,
+    name: business.name,
+    businessName: profile.businessName || business.name,
+    hours: profile.hours || {},
+    services: profile.services || [],
+    products: profile.products || [],
+    currency: profile.currency || 'NGN',
+    channels: {
+      whatsapp: Boolean(business.whatsapp_phone_number_id),
+      instagram: Boolean(business.instagram_account_id),
+      messenger: Boolean(business.facebook_page_id),
+      voice: Boolean(business.twilio_phone_number)
+    }
+  };
+}
+
+app.get('/api/businesses/:id/settings', requireApiAuth, async (req, res) => {
+  const businessId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(businessId)) {
+    return res.status(400).json({ error: 'businessId must be an integer' });
+  }
+
+  const business = await getBusinessById(businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  res.status(200).json(businessToSettingsJson(business));
+});
+
+// Validates a JSON-shaped offering row array (services or products) using
+// the same rules parseOfferingRows enforces for the HTML form — just
+// operating on real JSON types instead of parallel form-string arrays.
+function validateOfferingRowsJson(rows, label, { requireDuration }) {
+  const errors = [];
+  const normalizedRows = [];
+
+  if (!Array.isArray(rows)) {
+    return { rows: [], errors: [`${label} must be an array`] };
+  }
+
+  for (const row of rows) {
+    const name = typeof row?.name === 'string' ? row.name.trim() : '';
+
+    if (!name) {
+      errors.push(`${label}: each row needs a non-empty name`);
+      continue;
+    }
+
+    const price = Number(row.price);
+
+    if (!Number.isFinite(price) || price <= 0) {
+      errors.push(`"${name}": price must be a positive number`);
+      continue;
+    }
+
+    const normalizedRow = { name, price };
+
+    if (requireDuration) {
+      const duration = Number(row.durationMinutes);
+
+      if (!Number.isFinite(duration) || duration <= 0) {
+        errors.push(`"${name}": durationMinutes must be a positive number`);
+        continue;
+      }
+
+      normalizedRow.durationMinutes = duration;
+    }
+
+    normalizedRows.push(normalizedRow);
+  }
+
+  return { rows: normalizedRows, errors };
+}
+
+app.put('/api/businesses/:id/settings', requireApiAuth, async (req, res) => {
+  const businessId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(businessId)) {
+    return res.status(400).json({ error: 'businessId must be an integer' });
+  }
+
+  const business = await getBusinessById(businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  const body = req.body || {};
+  const businessName = typeof body.businessName === 'string' ? body.businessName.trim() : '';
+  const hours = body.hours && typeof body.hours === 'object' ? body.hours : {};
+
+  const { rows: services, errors: serviceErrors } =
+    validateOfferingRowsJson(body.services ?? [], 'services', { requireDuration: true });
+  const { rows: products, errors: productErrors } =
+    validateOfferingRowsJson(body.products ?? [], 'products', { requireDuration: false });
+
+  const updatedProfile = {
+    ...business.business_profile,
+    businessName,
+    hours,
+    services,
+    products
+  };
+
+  const errors = [
+    ...serviceErrors,
+    ...productErrors,
+    ...validateNewBusinessPayload({ name: businessName, businessProfile: updatedProfile })
+  ];
+
+  if (errors.length > 0) {
+    return res.status(400).json({ errors });
+  }
+
+  try {
+    await updateBusiness(business.id, { name: businessName, businessProfile: updatedProfile });
+    const updatedBusiness = await getBusinessById(business.id);
+    res.status(200).json(businessToSettingsJson(updatedBusiness));
+  } catch (err) {
+    console.error('[API UPDATE SETTINGS ERROR]', err);
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
 });
 
 // ---------------------------------------------------------------------

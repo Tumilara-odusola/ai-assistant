@@ -240,6 +240,20 @@ async function initDatabase() {
       resolved BOOLEAN DEFAULT false
     )
   `);
+
+  // Session tokens for the JSON API (POST /api/auth/login), backing the
+  // future mobile app. A real table rather than an in-memory store so
+  // logins survive restarts/redeploys. There's only one global admin
+  // identity right now (DASHBOARD_USER/DASHBOARD_PASSWORD), so a session
+  // is just a token + expiry — no user_id column until per-business API
+  // auth exists.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      token TEXT PRIMARY KEY,
+      created_at TIMESTAMP DEFAULT NOW(),
+      expires_at TIMESTAMP NOT NULL
+    )
+  `);
 }
 
 // Generates a dashboard_token for any business row that doesn't have one
@@ -498,6 +512,39 @@ async function getAllBusinesses() {
   return rows;
 }
 
+const ADMIN_SESSION_TTL_DAYS = 30;
+
+async function createAdminSession() {
+  const token = crypto.randomBytes(32).toString('hex');
+
+  const { rows } = await pool.query(
+    `INSERT INTO admin_sessions (token, expires_at)
+     VALUES ($1, NOW() + INTERVAL '${ADMIN_SESSION_TTL_DAYS} days')
+     RETURNING token, expires_at`,
+    [token]
+  );
+
+  return { token: rows[0].token, expiresAt: rows[0].expires_at };
+}
+
+async function getAdminSessionByToken(token) {
+  const { rows } = await pool.query(
+    'SELECT * FROM admin_sessions WHERE token = $1 AND expires_at > NOW()',
+    [token]
+  );
+
+  return rows[0] || null;
+}
+
+async function deleteAdminSession(token) {
+  await pool.query('DELETE FROM admin_sessions WHERE token = $1', [token]);
+}
+
+async function cleanupExpiredAdminSessions() {
+  const result = await pool.query('DELETE FROM admin_sessions WHERE expires_at <= NOW()');
+  return result.rowCount;
+}
+
 module.exports = {
   pool,
   initDatabase,
@@ -514,5 +561,9 @@ module.exports = {
   updateBusiness,
   createEscalation,
   getUnresolvedEscalations,
-  resolveEscalation
+  resolveEscalation,
+  createAdminSession,
+  getAdminSessionByToken,
+  deleteAdminSession,
+  cleanupExpiredAdminSessions
 };
