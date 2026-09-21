@@ -1233,12 +1233,170 @@ app.get('/', (req, res) => {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Autumn Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+    --accent: #D4A257;
+    --alert: #8B3A3A;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 60px 20px 80px;
+  }
+  .page {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .wordmark {
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(28px, 7vw, 40px);
+    font-weight: 700;
+    margin: 0 0 20px;
+    text-align: center;
+  }
+  .tagline {
+    font-size: clamp(16px, 3vw, 20px);
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.5;
+    max-width: 560px;
+    margin: 0 auto 48px;
+  }
+  .cta-wrap {
+    text-align: center;
+    margin-bottom: 64px;
+  }
+  .cta-button {
+    display: inline-block;
+    background: var(--text);
+    color: var(--bg);
+    text-decoration: none;
+    padding: 14px 32px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 16px;
+  }
+  .section-label {
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 24px;
+    text-align: center;
+    border-top: 2px solid var(--text);
+    padding-top: 24px;
+  }
+  .steps {
+    margin-bottom: 56px;
+  }
+  .step {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    padding: 20px 0;
+    border-bottom: 1px solid rgba(26, 46, 43, 0.14);
+  }
+  .step:last-child {
+    border-bottom: none;
+  }
+  .step-number {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--accent);
+    flex-shrink: 0;
+    width: 40px;
+  }
+  .step-title {
+    font-weight: 600;
+    font-size: 16px;
+    margin: 0 0 4px;
+  }
+  .step-description {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0;
+    line-height: 1.5;
+  }
+  .cta-wrap-bottom {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+  footer {
+    text-align: center;
+    padding-top: 24px;
+    border-top: 1px solid rgba(26, 46, 43, 0.14);
+  }
+  footer p {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 0;
+  }
+  footer a {
+    color: var(--accent);
+  }
+  @media (min-width: 700px) {
+    body {
+      padding: 80px 20px 100px;
+    }
+  }
+</style>
 </head>
 <body>
-<h1>Autumn Assistant</h1>
-<p>AI-powered customer messaging for businesses on WhatsApp and Instagram.</p>
-<p>Contact: <a href="mailto:autumnhqapp@gmail.com">autumnhqapp@gmail.com</a></p>
+<div class="page">
+  <h1 class="wordmark">Autumn Assistant</h1>
+  <p class="tagline">The AI that doesn't just reply — it books appointments and completes sales over WhatsApp, Instagram, and Messenger, automatically.</p>
+
+  <div class="cta-wrap">
+    <a href="/onboard" class="cta-button">Get Started</a>
+  </div>
+
+  <p class="section-label">How It Works</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-number">1</div>
+      <div>
+        <p class="step-title">Customer messages you</p>
+        <p class="step-description">On WhatsApp, Instagram, or Messenger — like any normal DM.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-number">2</div>
+      <div>
+        <p class="step-title">The AI handles it</p>
+        <p class="step-description">Answers questions, checks real availability, and actually completes the booking or sale.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-number">3</div>
+      <div>
+        <p class="step-title">You see it all on your dashboard</p>
+        <p class="step-description">Bookings, orders, and anything that needs your attention, in one place.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="cta-wrap-bottom">
+    <a href="/onboard" class="cta-button">Get Started</a>
+  </div>
+
+  <footer>
+    <p>Contact: <a href="mailto:autumnhqapp@gmail.com">autumnhqapp@gmail.com</a></p>
+  </footer>
+</div>
 </body>
 </html>`);
 });
