@@ -115,6 +115,93 @@ app.post(
   }
 );
 
+// ---------------------------------------------------------------------
+// META WEBHOOK VERIFICATION
+// Meta's handshake for subscribing the webhook URL — no body involved,
+// just query params, so it doesn't need raw-body handling. Kept here
+// alongside the POST receiver for readability.
+// ---------------------------------------------------------------------
+
+app.get('/webhook/meta', (req, res) => {
+  const verifyToken = process.env.META_VERIFY_TOKEN;
+
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === verifyToken) {
+    console.log('Meta webhook verified.');
+    return res.status(200).send(challenge);
+  }
+
+  console.error('Meta webhook verification failed.');
+  return res.sendStatus(403);
+});
+
+// ---------------------------------------------------------------------
+// META WEBHOOK RECEIVER
+// Registered before the global express.json() below on purpose, same as
+// /webhook/paystack: this route needs the raw request body (as a Buffer)
+// to verify Meta's HMAC signature (X-Hub-Signature-256) before trusting
+// anything in it. Without this, anyone who knew a connected business's
+// phone_number_id / instagram_account_id / facebook_page_id could POST
+// fake payloads and trigger fake bookings, fake orders, or spoofed sends.
+// ---------------------------------------------------------------------
+
+function verifyMetaSignature(rawBody, signatureHeader) {
+  const appSecret = process.env.META_APP_SECRET;
+  if (!appSecret || !signatureHeader) return false;
+
+  const prefix = 'sha256=';
+  if (!signatureHeader.startsWith(prefix)) return false;
+  const providedSignature = signatureHeader.slice(prefix.length);
+
+  const expectedSignature = crypto
+    .createHmac('sha256', appSecret)
+    .update(rawBody)
+    .digest('hex');
+
+  const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
+  const providedBuffer = Buffer.from(providedSignature, 'utf8');
+
+  if (expectedBuffer.length !== providedBuffer.length) return false;
+  return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
+app.post(
+  '/webhook/meta',
+  express.raw({ type: 'application/json' }),
+  (req, res) => {
+    const signature = req.headers['x-hub-signature-256'];
+    const rawBody = req.body;
+
+    if (!verifyMetaSignature(rawBody, signature)) {
+      console.error('[META WEBHOOK] Invalid signature, rejecting');
+      return res.sendStatus(401);
+    }
+
+    // Reply to Meta immediately once the request is verified — same
+    // fast-ack-then-process pattern as Paystack.
+    res.sendStatus(200);
+
+    let body;
+
+    try {
+      body = JSON.parse(rawBody.toString('utf8'));
+    } catch (err) {
+      console.error('[META WEBHOOK] Failed to parse JSON body', err);
+      return;
+    }
+
+    console.log('[META WEBHOOK]', JSON.stringify(body, null, 2));
+
+    // Process the message after acknowledging Meta.
+    processMetaWebhook(body).catch((err) => {
+      console.error('Error processing Meta webhook:', err);
+    });
+  }
+);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -336,45 +423,6 @@ function cleanupStaleConversations() {
 }
 
 setInterval(cleanupStaleConversations, CONVERSATION_CLEANUP_INTERVAL_MS);
-
-// ---------------------------------------------------------------------
-// META WEBHOOK VERIFICATION
-// ---------------------------------------------------------------------
-
-app.get('/webhook/meta', (req, res) => {
-  const verifyToken = process.env.META_VERIFY_TOKEN;
-
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === verifyToken) {
-    console.log('Meta webhook verified.');
-    return res.status(200).send(challenge);
-  }
-
-  console.error('Meta webhook verification failed.');
-  return res.sendStatus(403);
-});
-
-// ---------------------------------------------------------------------
-// META WEBHOOK RECEIVER
-// ---------------------------------------------------------------------
-
-app.post('/webhook/meta', (req, res) => {
-  // Reply to Meta immediately.
-  res.sendStatus(200);
-
-  console.log(
-    '[META WEBHOOK]',
-    JSON.stringify(req.body, null, 2)
-  );
-
-  // Process the message after acknowledging Meta.
-  processMetaWebhook(req.body).catch((err) => {
-    console.error('Error processing Meta webhook:', err);
-  });
-});
 
 async function processMetaWebhook(body) {
   const entries = body.entry || [];
