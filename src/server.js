@@ -33,6 +33,7 @@ const {
   getBusinessByDashboardToken,
   getBusinessById,
   getBusinessByName,
+  getBusinessByFacebookPageId,
   createBusiness,
   updateBusiness
 } = require('./db');
@@ -442,6 +443,56 @@ async function processMetaWebhook(body) {
   }
 
   // ---------------------------------------------------------------
+  // FACEBOOK MESSENGER
+  // Messenger payload: entry[].messaging[], routed by the Facebook
+  // Page ID (entry.id) rather than a phone number or Instagram account.
+  // ---------------------------------------------------------------
+  if (body.object === 'page') {
+    for (const entry of entries) {
+      const messaging = entry.messaging || [];
+
+      if (messaging.length === 0) {
+        continue;
+      }
+
+      const pageId = entry.id;
+      const business = pageId
+        ? await getBusinessByFacebookPageId(pageId)
+        : null;
+
+      if (!business) {
+        console.error(
+          `[MESSENGER] No business found for page id=${pageId}, skipping`
+        );
+        continue;
+      }
+
+      for (const event of messaging) {
+        const senderId = event.sender?.id;
+        const text = event.message?.text;
+
+        if (!senderId || typeof text !== 'string') {
+          continue;
+        }
+
+        console.log(
+          `[INCOMING messenger] ${senderId}: ${text}`
+        );
+
+        await handleIncomingMessage(
+          'messenger',
+          senderId,
+          text,
+          business.business_profile,
+          business.id
+        );
+      }
+    }
+
+    return;
+  }
+
+  // ---------------------------------------------------------------
   // INSTAGRAM
   // Instagram can arrive in two shapes depending on how the app is
   // integrated:
@@ -784,6 +835,22 @@ async function resolveInstagramToken(businessId) {
   return token;
 }
 
+async function resolveMessengerToken(businessId) {
+  const business = await getBusinessById(businessId);
+
+  let token = business?.facebook_page_token;
+
+  if (businessId === FALLBACK_BUSINESS_ID) {
+    token = token || process.env.META_MESSENGER_TOKEN;
+  }
+
+  if (!token) {
+    throw new Error(`Missing Messenger token for business ${businessId}`);
+  }
+
+  return token;
+}
+
 async function sendMessage(platform, recipientId, text, businessId) {
   console.log(
     `[SEND ATTEMPT] platform=${platform}, to=${recipientId}, business=${businessId}`
@@ -804,6 +871,16 @@ async function sendMessage(platform, recipientId, text, businessId) {
     const token = await resolveInstagramToken(businessId);
 
     return sendInstagramMessage(
+      recipientId,
+      text,
+      token
+    );
+  }
+
+  if (platform === 'messenger') {
+    const token = await resolveMessengerToken(businessId);
+
+    return sendMessengerMessage(
       recipientId,
       text,
       token
@@ -969,6 +1046,84 @@ async function sendInstagramMessage(recipientId, text, token) {
 
   console.log(
     'Instagram message sent successfully:',
+    data.message_id || 'no message ID returned'
+  );
+
+  return data;
+}
+
+// ---------------------------------------------------------------------
+// FACEBOOK MESSENGER SEND
+// Same Send API payload shape as Instagram, but a different host
+// (graph.facebook.com, not graph.instagram.com) and a Page Access Token
+// rather than an Instagram-scoped one — the actual "not just a copy-paste"
+// difference between these two channels.
+// ---------------------------------------------------------------------
+
+async function sendMessengerMessage(recipientId, text, token) {
+  if (!token) {
+    throw new Error('Missing Messenger token');
+  }
+
+  const url = 'https://graph.facebook.com/v20.0/me/messages';
+
+  const payload = {
+    recipient: {
+      id: recipientId
+    },
+    message: {
+      text
+    }
+  };
+
+  console.log(
+    '[MESSENGER REQUEST]',
+    JSON.stringify(
+      {
+        url,
+        recipient: recipientId,
+        body: text
+      },
+      null,
+      2
+    )
+  );
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const responseText = await response.text();
+
+  let data;
+
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    data = {
+      raw: responseText
+    };
+  }
+
+  console.log(
+    `[MESSENGER API] ${response.status}:`,
+    JSON.stringify(data, null, 2)
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Messenger send failed with HTTP ${response.status}: ` +
+      JSON.stringify(data)
+    );
+  }
+
+  console.log(
+    'Messenger message sent successfully:',
     data.message_id || 'no message ID returned'
   );
 
@@ -1727,6 +1882,11 @@ ${channelStatusHtml(
   "You'll need to connect Instagram through Meta's Developer platform, which requires business verification — contact us for help getting this configured."
 )}
 ${channelStatusHtml(
+  'Messenger',
+  Boolean(business.facebook_page_id),
+  "You'll need a Facebook Page connected through Meta's Developer platform — contact us for help getting this configured."
+)}
+${channelStatusHtml(
   'Voice',
   Boolean(business.twilio_phone_number),
   'This feature is still being rolled out.'
@@ -1941,7 +2101,17 @@ app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
     return res.status(400).json({ errors });
   }
 
-  const { name, whatsappPhoneNumberId, instagramAccountId, businessProfile, whatsappToken, instagramToken, recoveryEmail } = req.body;
+  const {
+    name,
+    whatsappPhoneNumberId,
+    instagramAccountId,
+    businessProfile,
+    whatsappToken,
+    instagramToken,
+    recoveryEmail,
+    facebookPageId,
+    facebookPageToken
+  } = req.body;
 
   try {
     const business = await createBusiness({
@@ -1951,7 +2121,9 @@ app.post('/admin/businesses', requireDashboardAuth, async (req, res) => {
       businessProfile,
       whatsappToken,
       instagramToken,
-      recoveryEmail
+      recoveryEmail,
+      facebookPageId,
+      facebookPageToken
     });
 
     return res.status(201).json(business);
@@ -2251,6 +2423,14 @@ ${errs.length > 0 ? `<div class="errors"><strong>Please fix the following:</stro
 <input type="password" id="instagramToken" name="instagramToken" value="${escapeHtml(v.instagramToken || '')}">
 <p class="hint">Your Instagram access token from Meta — used to send replies on your behalf. Kept confidential, never shown again after this.</p>
 
+<label for="facebookPageId">Facebook Page ID (optional)</label>
+<input type="text" id="facebookPageId" name="facebookPageId" value="${escapeHtml(v.facebookPageId || '')}">
+<p class="hint">Found in your Meta Developer dashboard under Messenger → Settings, or your Page's About section.</p>
+
+<label for="facebookPageToken">Facebook Page access token (optional)</label>
+<input type="password" id="facebookPageToken" name="facebookPageToken" value="${escapeHtml(v.facebookPageToken || '')}">
+<p class="hint">Your Page Access Token from Meta — used to send Messenger replies on your behalf. Kept confidential, never shown again after this.</p>
+
 <h2>Business hours</h2>
 ${Object.keys(DAY_FIELD_NAMES).map((day) => `
   <div class="day-row">
@@ -2395,6 +2575,8 @@ app.post('/onboard', async (req, res) => {
   const whatsappToken = (body.whatsappToken || '').trim();
   const instagramToken = (body.instagramToken || '').trim();
   const recoveryEmail = (body.recoveryEmail || '').trim();
+  const facebookPageId = (body.facebookPageId || '').trim();
+  const facebookPageToken = (body.facebookPageToken || '').trim();
 
   const hours = {};
 
@@ -2443,7 +2625,9 @@ app.post('/onboard', async (req, res) => {
       businessProfile,
       whatsappToken: whatsappToken || null,
       instagramToken: instagramToken || null,
-      recoveryEmail: recoveryEmail || null
+      recoveryEmail: recoveryEmail || null,
+      facebookPageId: facebookPageId || null,
+      facebookPageToken: facebookPageToken || null
     });
 
     const dashboardUrl = `${req.protocol}://${req.get('host')}/my-dashboard/${business.dashboard_token}`;

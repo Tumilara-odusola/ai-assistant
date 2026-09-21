@@ -74,7 +74,8 @@ function decryptBusinessRow(row) {
   return {
     ...row,
     whatsapp_token: decryptToken(row.whatsapp_token),
-    instagram_token: decryptToken(row.instagram_token)
+    instagram_token: decryptToken(row.instagram_token),
+    facebook_page_token: decryptToken(row.facebook_page_token)
   };
 }
 
@@ -91,7 +92,9 @@ async function initDatabase() {
       whatsapp_token TEXT,
       instagram_token TEXT,
       twilio_phone_number TEXT UNIQUE,
-      recovery_email TEXT
+      recovery_email TEXT,
+      facebook_page_id TEXT UNIQUE,
+      facebook_page_token TEXT
     )
   `);
 
@@ -210,6 +213,20 @@ async function initDatabase() {
   await pool.query(`
     ALTER TABLE businesses
     ADD COLUMN IF NOT EXISTS recovery_email TEXT
+  `);
+
+  // Facebook Messenger routing/credential columns. facebook_page_token is
+  // a genuinely separate credential from instagram_token — a Page Access
+  // Token, not an Instagram-scoped token — even for a business that
+  // connects both channels through the same underlying Facebook Page.
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS facebook_page_id TEXT UNIQUE
+  `);
+
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS facebook_page_token TEXT
   `);
 }
 
@@ -335,6 +352,15 @@ async function getBusinessByInstagramAccountId(accountId) {
   return decryptBusinessRow(rows[0]) || null;
 }
 
+async function getBusinessByFacebookPageId(pageId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM businesses WHERE facebook_page_id = $1',
+    [pageId]
+  );
+
+  return decryptBusinessRow(rows[0]) || null;
+}
+
 async function getBusinessByTwilioPhoneNumber(phoneNumber) {
   const { rows } = await pool.query(
     'SELECT * FROM businesses WHERE twilio_phone_number = $1',
@@ -351,13 +377,15 @@ async function createBusiness({
   businessProfile,
   whatsappToken,
   instagramToken,
-  recoveryEmail
+  recoveryEmail,
+  facebookPageId,
+  facebookPageToken
 }) {
   const dashboardToken = crypto.randomBytes(24).toString('hex');
 
   const { rows } = await pool.query(
-    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile, dashboard_token, whatsapp_token, instagram_token, recovery_email)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile, dashboard_token, whatsapp_token, instagram_token, recovery_email, facebook_page_id, facebook_page_token)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
     [
       name,
@@ -367,7 +395,9 @@ async function createBusiness({
       dashboardToken,
       encryptToken(whatsappToken || null),
       encryptToken(instagramToken || null),
-      recoveryEmail || null
+      recoveryEmail || null,
+      facebookPageId || null,
+      encryptToken(facebookPageToken || null)
     ]
   );
 
@@ -420,6 +450,7 @@ module.exports = {
   getBusinessById,
   getBusinessByTwilioPhoneNumber,
   getBusinessByName,
+  getBusinessByFacebookPageId,
   createBusiness,
   updateBusiness
 };
