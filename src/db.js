@@ -481,6 +481,23 @@ async function getBusinessByName(name) {
   return decryptBusinessRow(rows[0]) || null;
 }
 
+// Only selects the columns an admin business listing needs (id, name,
+// signup date, and the per-channel routing IDs used to derive connected/
+// not-connected). Deliberately leaves out whatsapp_token/instagram_token/
+// facebook_page_token — no reason to decrypt credentials just to render a
+// yes/no badge per channel.
+async function getAllBusinesses() {
+  const { rows } = await pool.query(`
+    SELECT id, name, created_at, whatsapp_phone_number_id,
+           instagram_account_id, facebook_page_id, twilio_phone_number,
+           dashboard_token
+    FROM businesses
+    ORDER BY created_at DESC
+  `);
+
+  return rows;
+}
+
 module.exports = {
   pool,
   initDatabase,
@@ -492,6 +509,7 @@ module.exports = {
   getBusinessByTwilioPhoneNumber,
   getBusinessByName,
   getBusinessByFacebookPageId,
+  getAllBusinesses,
   createBusiness,
   updateBusiness,
   createEscalation,

@@ -34,6 +34,7 @@ const {
   getBusinessById,
   getBusinessByName,
   getBusinessByFacebookPageId,
+  getAllBusinesses,
   createBusiness,
   updateBusiness,
   createEscalation,
@@ -1736,6 +1737,17 @@ async function renderBookingsOrdersPage(businessId, { requestOrigin, isAdminView
     color: var(--muted);
     margin: 0 0 8px;
   }
+  .admin-nav-link {
+    margin: 0 0 16px;
+    font-size: 13px;
+  }
+  .admin-nav-link a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .admin-nav-link a:hover {
+    color: var(--accent);
+  }
   .admin-link-section {
     margin-bottom: 24px;
   }
@@ -1855,6 +1867,7 @@ async function renderBookingsOrdersPage(businessId, { requestOrigin, isAdminView
 </head>
 <body>
 <div class="page">
+  ${isAdminView ? '<p class="admin-nav-link"><a href="/dashboard/businesses">← All Businesses</a></p>' : ''}
   <p class="eyebrow">Today</p>
   <h1>${escapeHtml(businessName)}</h1>
 
@@ -1883,6 +1896,159 @@ async function renderBookingsOrdersPage(businessId, { requestOrigin, isAdminView
 </html>`;
 }
 
+function renderBusinessesListPage(businesses) {
+  function channelBadge(label, isConnected) {
+    return `<span class="badge ${isConnected ? 'yes' : 'no'}">${escapeHtml(label)}: ${isConnected ? 'Yes' : 'No'}</span>`;
+  }
+
+  const rowsHtml = businesses.map((b) => {
+    const signupDate = new Date(b.created_at).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+
+    return `
+    <div class="row">
+      <div class="row-main">
+        <div class="row-title">${escapeHtml(b.name)}</div>
+        <div class="row-date">Signed up ${escapeHtml(signupDate)}</div>
+        <div class="badges">
+          ${channelBadge('WhatsApp', Boolean(b.whatsapp_phone_number_id))}
+          ${channelBadge('Instagram', Boolean(b.instagram_account_id))}
+          ${channelBadge('Messenger', Boolean(b.facebook_page_id))}
+          ${channelBadge('Voice', Boolean(b.twilio_phone_number))}
+        </div>
+      </div>
+      <div class="row-side">
+        <a class="view-link" href="/dashboard?businessId=${b.id}">View Dashboard →</a>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>All Businesses</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+    --accent: #D4A257;
+    --alert: #8B3A3A;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 32px 20px 80px;
+  }
+  .page {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 6px;
+  }
+  h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(22px, 5vw, 28px);
+    font-weight: 700;
+    margin: 0 0 28px;
+    padding-bottom: 24px;
+    border-bottom: 2px solid var(--text);
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px 0;
+    border-bottom: 1px solid rgba(26, 46, 43, 0.14);
+  }
+  .row:first-of-type {
+    padding-top: 0;
+  }
+  .row-title {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .row-date {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 2px 0 10px;
+  }
+  .badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .badge.yes {
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  .badge.no {
+    color: var(--muted);
+    border: 1px solid rgba(26, 46, 43, 0.25);
+  }
+  .row-side {
+    flex-shrink: 0;
+  }
+  .view-link {
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .view-link:hover {
+    text-decoration: underline;
+  }
+  .empty {
+    color: var(--muted);
+    padding: 24px 0;
+    font-size: 14px;
+  }
+  @media (min-width: 700px) {
+    body {
+      padding: 56px 20px 100px;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="eyebrow">Admin</p>
+  <h1>All Businesses</h1>
+  ${businesses.length === 0 ? '<p class="empty">No businesses yet.</p>' : rowsHtml}
+</div>
+</body>
+</html>`;
+}
+
 app.get('/dashboard', requireDashboardAuth, async (req, res) => {
   const parsedBusinessId = parseInt(req.query.businessId, 10);
   const businessId = Number.isInteger(parsedBusinessId) ? parsedBusinessId : 1;
@@ -1890,6 +2056,11 @@ app.get('/dashboard', requireDashboardAuth, async (req, res) => {
   const requestOrigin = `${req.protocol}://${req.get('host')}`;
 
   res.type('html').send(await renderBookingsOrdersPage(businessId, { requestOrigin, isAdminView: true }));
+});
+
+app.get('/dashboard/businesses', requireDashboardAuth, async (req, res) => {
+  const businesses = await getAllBusinesses();
+  res.type('html').send(renderBusinessesListPage(businesses));
 });
 
 app.post('/dashboard/resolve-escalation/:id', requireDashboardAuth, async (req, res) => {
