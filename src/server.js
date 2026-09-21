@@ -3533,6 +3533,13 @@ function validateOfferingRowsJson(rows, label, { requireDuration }) {
       normalizedRow.durationMinutes = duration;
     }
 
+    // Optional free text — buildSystemPrompt interpolates products[].description
+    // directly into the LLM's system prompt (replyEngine.js), so it has to
+    // survive a round-trip through this endpoint, not just get dropped.
+    if (typeof row.description === 'string' && row.description.trim()) {
+      normalizedRow.description = row.description.trim();
+    }
+
     normalizedRows.push(normalizedRow);
   }
 
