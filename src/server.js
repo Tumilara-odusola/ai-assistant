@@ -15,6 +15,7 @@ process.on('unhandledRejection', (reason) => {
 require('dotenv').config({ override: true });
 
 const express = require('express');
+const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -3393,7 +3394,18 @@ app.post('/recover-dashboard-link', async (req, res) => {
 // Runs alongside the HTML pages above — same data, same auth model
 // (the single global admin identity), just JSON instead of rendered
 // HTML. See requireApiAuth / verifyDashboardCredentials above.
+//
+// CORS is scoped to /api only — these routes are called by non-browser
+// clients (the mobile app) and, going forward, browser-based ones (the
+// Expo web build, or any other web client), authenticated by a bearer
+// token rather than a browser session/cookie, so allowing any origin
+// doesn't expose anything a valid token wouldn't already grant. The
+// dashboard HTML routes stay un-CORS'd — those rely on Basic Auth, which
+// browsers handle very differently, and were never meant to be called
+// cross-origin.
 // ---------------------------------------------------------------------
+
+app.use('/api', cors());
 
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
