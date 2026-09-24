@@ -254,6 +254,33 @@ async function initDatabase() {
       expires_at TIMESTAMP NOT NULL
     )
   `);
+
+  // Per-business login credentials, additive alongside dashboard_token —
+  // existing token-only businesses simply have both columns NULL. UNIQUE
+  // on email is safe to add against existing rows: Postgres treats every
+  // NULL as distinct, so any number of NULL emails coexist under it.
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS email TEXT UNIQUE
+  `);
+
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS password_hash TEXT
+  `);
+
+  // Session tokens for POST /api/business-auth/login — same shape as
+  // admin_sessions, but scoped to one business via business_id so
+  // requireBusinessAuth can derive "which business" from the token alone,
+  // never from a URL param.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS business_sessions (
+      token TEXT PRIMARY KEY,
+      business_id INTEGER NOT NULL REFERENCES businesses(id),
+      created_at TIMESTAMP DEFAULT NOW(),
+      expires_at TIMESTAMP NOT NULL
+    )
+  `);
 }
 
 // Generates a dashboard_token for any business row that doesn't have one
@@ -405,13 +432,15 @@ async function createBusiness({
   instagramToken,
   recoveryEmail,
   facebookPageId,
-  facebookPageToken
+  facebookPageToken,
+  email,
+  passwordHash
 }) {
   const dashboardToken = crypto.randomBytes(24).toString('hex');
 
   const { rows } = await pool.query(
-    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile, dashboard_token, whatsapp_token, instagram_token, recovery_email, facebook_page_id, facebook_page_token)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO businesses (name, whatsapp_phone_number_id, instagram_account_id, business_profile, dashboard_token, whatsapp_token, instagram_token, recovery_email, facebook_page_id, facebook_page_token, email, password_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING *`,
     [
       name,
@@ -423,7 +452,9 @@ async function createBusiness({
       encryptToken(instagramToken || null),
       recoveryEmail || null,
       facebookPageId || null,
-      encryptToken(facebookPageToken || null)
+      encryptToken(facebookPageToken || null),
+      email || null,
+      passwordHash || null
     ]
   );
 
@@ -495,6 +526,15 @@ async function getBusinessByName(name) {
   return decryptBusinessRow(rows[0]) || null;
 }
 
+async function getBusinessByEmail(email) {
+  const { rows } = await pool.query(
+    'SELECT * FROM businesses WHERE LOWER(email) = LOWER($1) LIMIT 1',
+    [email]
+  );
+
+  return decryptBusinessRow(rows[0]) || null;
+}
+
 // Only selects the columns an admin business listing needs (id, name,
 // signup date, and the per-channel routing IDs used to derive connected/
 // not-connected). Deliberately leaves out whatsapp_token/instagram_token/
@@ -545,6 +585,39 @@ async function cleanupExpiredAdminSessions() {
   return result.rowCount;
 }
 
+const BUSINESS_SESSION_TTL_DAYS = 30;
+
+async function createBusinessSession(businessId) {
+  const token = crypto.randomBytes(32).toString('hex');
+
+  const { rows } = await pool.query(
+    `INSERT INTO business_sessions (token, business_id, expires_at)
+     VALUES ($1, $2, NOW() + INTERVAL '${BUSINESS_SESSION_TTL_DAYS} days')
+     RETURNING token, expires_at`,
+    [token, businessId]
+  );
+
+  return { token: rows[0].token, expiresAt: rows[0].expires_at };
+}
+
+async function getBusinessSessionByToken(token) {
+  const { rows } = await pool.query(
+    'SELECT * FROM business_sessions WHERE token = $1 AND expires_at > NOW()',
+    [token]
+  );
+
+  return rows[0] || null;
+}
+
+async function deleteBusinessSession(token) {
+  await pool.query('DELETE FROM business_sessions WHERE token = $1', [token]);
+}
+
+async function cleanupExpiredBusinessSessions() {
+  const result = await pool.query('DELETE FROM business_sessions WHERE expires_at <= NOW()');
+  return result.rowCount;
+}
+
 module.exports = {
   pool,
   initDatabase,
@@ -555,6 +628,7 @@ module.exports = {
   getBusinessById,
   getBusinessByTwilioPhoneNumber,
   getBusinessByName,
+  getBusinessByEmail,
   getBusinessByFacebookPageId,
   getAllBusinesses,
   createBusiness,
@@ -565,5 +639,9 @@ module.exports = {
   createAdminSession,
   getAdminSessionByToken,
   deleteAdminSession,
-  cleanupExpiredAdminSessions
+  cleanupExpiredAdminSessions,
+  createBusinessSession,
+  getBusinessSessionByToken,
+  deleteBusinessSession,
+  cleanupExpiredBusinessSessions
 };

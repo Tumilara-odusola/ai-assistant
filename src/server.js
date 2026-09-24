@@ -16,6 +16,7 @@ require('dotenv').config({ override: true });
 
 const express = require('express');
 const cors = require('cors');
+const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -34,6 +35,7 @@ const {
   getBusinessByDashboardToken,
   getBusinessById,
   getBusinessByName,
+  getBusinessByEmail,
   getBusinessByFacebookPageId,
   getAllBusinesses,
   createBusiness,
@@ -44,7 +46,11 @@ const {
   createAdminSession,
   getAdminSessionByToken,
   deleteAdminSession,
-  cleanupExpiredAdminSessions
+  cleanupExpiredAdminSessions,
+  createBusinessSession,
+  getBusinessSessionByToken,
+  deleteBusinessSession,
+  cleanupExpiredBusinessSessions
 } = require('./db');
 const { setupVoiceWebSocket } = require('./voice');
 
@@ -456,6 +462,12 @@ const ADMIN_SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // how often to sweep 
 setInterval(() => {
   cleanupExpiredAdminSessions().catch((err) => {
     console.error('[ADMIN SESSION CLEANUP ERROR]', err);
+  });
+}, ADMIN_SESSION_CLEANUP_INTERVAL_MS);
+
+setInterval(() => {
+  cleanupExpiredBusinessSessions().catch((err) => {
+    console.error('[BUSINESS SESSION CLEANUP ERROR]', err);
   });
 }, ADMIN_SESSION_CLEANUP_INTERVAL_MS);
 
@@ -1587,6 +1599,28 @@ async function requireApiAuth(req, res, next) {
   next();
 }
 
+// Same Bearer-token shape as requireApiAuth, but backed by business_sessions
+// instead of admin_sessions — the resulting req.businessId is what scopes
+// every /api/my-business/* route to "my own business only". Handlers must
+// read req.businessId, never req.params.id, or this scoping is pointless.
+async function requireBusinessAuth(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const [scheme, token] = authHeader.split(' ');
+
+  if (scheme !== 'Bearer' || !token) {
+    return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+  }
+
+  const session = await getBusinessSessionByToken(token);
+
+  if (!session) {
+    return res.status(401).json({ error: 'Invalid or expired session token' });
+  }
+
+  req.businessId = session.business_id;
+  next();
+}
+
 async function fetchDashboardData(businessId) {
   const [{ rows: businessRows }, { rows: bookings }, { rows: orders }] = await Promise.all([
     pool.query(
@@ -2606,6 +2640,42 @@ app.post('/my-dashboard/:token/settings', async (req, res) => {
 // BUSINESS ONBOARDING (ADMIN)
 // ---------------------------------------------------------------------
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MIN_PASSWORD_LENGTH = 8;
+const BCRYPT_COST_FACTOR = 10;
+
+// A precomputed bcrypt hash of an arbitrary, unguessable-but-irrelevant
+// string — never checked against a real password. Used only so
+// POST /api/business-auth/login can run a bcrypt.compare() on every
+// request, including ones where the email doesn't match any business.
+// Without this, a request for a nonexistent email would return in
+// microseconds (no compare needed) while a wrong-password request takes
+// bcrypt's ~100ms, letting an attacker enumerate valid business emails
+// purely by measuring response time.
+const DUMMY_PASSWORD_HASH = '$2b$10$1gyOeYto/gDXi..FlxR6d.9U4KIRvbmDzglbRBRUSpRJmFu30nqIi';
+
+// Shared by /onboard and POST /api/business-auth/signup — both create a
+// business-owner login credential, so both need the same email/password
+// rules. confirmPassword is optional: /onboard's form collects it to catch
+// typos, but a JSON API caller has no reason to send a password twice.
+function validateEmailAndPassword({ email, password, confirmPassword }) {
+  const errors = [];
+
+  if (!email || !EMAIL_REGEX.test(email)) {
+    errors.push('A valid email is required');
+  }
+
+  if (!password || password.length < MIN_PASSWORD_LENGTH) {
+    errors.push(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  }
+
+  if (confirmPassword !== undefined && password !== confirmPassword) {
+    errors.push('Passwords do not match');
+  }
+
+  return errors;
+}
+
 function validateNewBusinessPayload(body) {
   const errors = [];
 
@@ -2951,6 +3021,17 @@ ${errs.length > 0 ? `<div class="errors"><strong>Please fix the following:</stro
 <label for="businessName">Business name</label>
 <input type="text" id="businessName" name="businessName" value="${escapeHtml(v.businessName || '')}">
 
+<label for="email">Email</label>
+<input type="text" id="email" name="email" value="${escapeHtml(v.email || '')}">
+<p class="hint">Used to log in to your dashboard.</p>
+
+<label for="password">Password</label>
+<input type="password" id="password" name="password" value="">
+<p class="hint">At least 8 characters.</p>
+
+<label for="confirmPassword">Confirm password</label>
+<input type="password" id="confirmPassword" name="confirmPassword" value="">
+
 <label for="recoveryEmail">Recovery email (optional)</label>
 <input type="text" id="recoveryEmail" name="recoveryEmail" value="${escapeHtml(v.recoveryEmail || '')}">
 <p class="hint">If you ever lose your dashboard link, we can help you find it again using your business name and this email. Recommended, but optional.</p>
@@ -3118,6 +3199,9 @@ app.post('/onboard', async (req, res) => {
   const body = req.body || {};
 
   const businessName = (body.businessName || '').trim();
+  const email = (body.email || '').trim();
+  const password = body.password || '';
+  const confirmPassword = body.confirmPassword || '';
   const whatsappPhoneNumberId = (body.whatsappPhoneNumberId || '').trim();
   const instagramAccountId = (body.instagramAccountId || '').trim();
   const whatsappToken = (body.whatsappToken || '').trim();
@@ -3158,7 +3242,8 @@ app.post('/onboard', async (req, res) => {
   const errors = [
     ...serviceErrors,
     ...productErrors,
-    ...validateNewBusinessPayload({ name: businessName, businessProfile })
+    ...validateNewBusinessPayload({ name: businessName, businessProfile }),
+    ...validateEmailAndPassword({ email, password, confirmPassword })
   ];
 
   if (errors.length > 0) {
@@ -3166,8 +3251,12 @@ app.post('/onboard', async (req, res) => {
   }
 
   try {
+    const passwordHash = await bcrypt.hash(password, BCRYPT_COST_FACTOR);
+
     const business = await createBusiness({
       name: businessName,
+      email,
+      passwordHash,
       whatsappPhoneNumberId: whatsappPhoneNumberId || null,
       instagramAccountId: instagramAccountId || null,
       businessProfile,
@@ -3183,11 +3272,12 @@ app.post('/onboard', async (req, res) => {
     return res.type('html').send(renderOnboardSuccess(business, dashboardUrl));
   } catch (err) {
     if (err.code === '23505') {
+      const message = err.constraint === 'businesses_email_key'
+        ? 'A business with that email already exists'
+        : 'A business with that WhatsApp phone number ID or Instagram account ID already exists';
+
       return res.status(409).type('html').send(
-        renderOnboardForm({
-          values: body,
-          errors: ['A business with that WhatsApp phone number ID or Instagram account ID already exists']
-        })
+        renderOnboardForm({ values: body, errors: [message] })
       );
     }
 
@@ -3424,18 +3514,16 @@ app.post('/api/auth/logout', requireApiAuth, async (req, res) => {
   res.sendStatus(204);
 });
 
-app.get('/api/businesses/:id/dashboard', requireApiAuth, async (req, res) => {
-  const businessId = parseInt(req.params.id, 10);
-
-  if (!Number.isInteger(businessId)) {
-    return res.status(400).json({ error: 'businessId must be an integer' });
-  }
-
+// Shared by the admin GET /api/businesses/:id/dashboard and the
+// business-scoped GET /api/my-business/dashboard — same data, only the
+// source of businessId differs between the two routes. Returns null if
+// the business doesn't exist.
+async function buildDashboardJson(businessId) {
   const { businessName, businessProfile, bookings, orders } =
     await fetchDashboardData(businessId);
 
   if (!businessProfile) {
-    return res.status(404).json({ error: 'Business not found' });
+    return null;
   }
 
   const currency = businessProfile?.currency || 'NGN';
@@ -3444,7 +3532,7 @@ app.get('/api/businesses/:id/dashboard', requireApiAuth, async (req, res) => {
   const activity = buildActivityRows(businessProfile, bookings, orders);
   const escalations = await getUnresolvedEscalations(businessId);
 
-  res.status(200).json({
+  return {
     businessId,
     businessName,
     today: {
@@ -3467,7 +3555,23 @@ app.get('/api/businesses/:id/dashboard', requireApiAuth, async (req, res) => {
       messageText: esc.message_text,
       createdAt: esc.created_at
     }))
-  });
+  };
+}
+
+app.get('/api/businesses/:id/dashboard', requireApiAuth, async (req, res) => {
+  const businessId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(businessId)) {
+    return res.status(400).json({ error: 'businessId must be an integer' });
+  }
+
+  const dashboard = await buildDashboardJson(businessId);
+
+  if (!dashboard) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  res.status(200).json(dashboard);
 });
 
 function businessToSettingsJson(business) {
@@ -3558,20 +3662,13 @@ function validateOfferingRowsJson(rows, label, { requireDuration }) {
   return { rows: normalizedRows, errors };
 }
 
-app.put('/api/businesses/:id/settings', requireApiAuth, async (req, res) => {
-  const businessId = parseInt(req.params.id, 10);
-
-  if (!Number.isInteger(businessId)) {
-    return res.status(400).json({ error: 'businessId must be an integer' });
-  }
-
-  const business = await getBusinessById(businessId);
-
-  if (!business) {
-    return res.status(404).json({ error: 'Business not found' });
-  }
-
-  const body = req.body || {};
+// Shared by the admin PUT /api/businesses/:id/settings and the
+// business-scoped PUT /api/my-business/settings — identical validation and
+// update logic; only how `business` was looked up differs between callers.
+// Returns { errors } on validation failure, { settings } on success. Lets
+// the update itself (a real DB write) throw, so each route's own
+// try/catch decides how to log and respond to a failure.
+async function applySettingsUpdate(business, body) {
   const businessName = typeof body.businessName === 'string' ? body.businessName.trim() : '';
   const hours = body.hours && typeof body.hours === 'object' ? body.hours : {};
 
@@ -3595,15 +3692,177 @@ app.put('/api/businesses/:id/settings', requireApiAuth, async (req, res) => {
   ];
 
   if (errors.length > 0) {
+    return { errors };
+  }
+
+  await updateBusiness(business.id, { name: businessName, businessProfile: updatedProfile });
+  const updatedBusiness = await getBusinessById(business.id);
+  return { settings: businessToSettingsJson(updatedBusiness) };
+}
+
+app.put('/api/businesses/:id/settings', requireApiAuth, async (req, res) => {
+  const businessId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(businessId)) {
+    return res.status(400).json({ error: 'businessId must be an integer' });
+  }
+
+  const business = await getBusinessById(businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  try {
+    const result = await applySettingsUpdate(business, req.body || {});
+
+    if (result.errors) {
+      return res.status(400).json({ errors: result.errors });
+    }
+
+    res.status(200).json(result.settings);
+  } catch (err) {
+    console.error('[API UPDATE SETTINGS ERROR]', err);
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+// ---------------------------------------------------------------------
+// BUSINESS OWNER AUTH (email + password) — additive alongside the
+// existing dashboard_token / my-dashboard link flow, which keeps working
+// unchanged. This is a second, parallel login path for the JSON API
+// (mobile app, etc.), not a replacement of the token-based one.
+// ---------------------------------------------------------------------
+
+app.post('/api/business-auth/signup', async (req, res) => {
+  const body = req.body || {};
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  const email = typeof body.email === 'string' ? body.email.trim() : '';
+  const password = typeof body.password === 'string' ? body.password : '';
+  const profileInput = body.businessProfile || {};
+
+  const hours = profileInput.hours && typeof profileInput.hours === 'object' ? profileInput.hours : {};
+
+  const { rows: services, errors: serviceErrors } =
+    validateOfferingRowsJson(profileInput.services ?? [], 'services', { requireDuration: true });
+  const { rows: products, errors: productErrors } =
+    validateOfferingRowsJson(profileInput.products ?? [], 'products', { requireDuration: false });
+
+  const businessProfile = {
+    businessName: typeof profileInput.businessName === 'string' ? profileInput.businessName.trim() : name,
+    currency: 'NGN',
+    voice: DEFAULT_VOICE,
+    hours,
+    services,
+    products,
+    escalateIfCustomerMentions: DEFAULT_ESCALATE_TERMS
+  };
+
+  const errors = [
+    ...serviceErrors,
+    ...productErrors,
+    ...validateNewBusinessPayload({ name, businessProfile }),
+    ...validateEmailAndPassword({ email, password })
+  ];
+
+  if (errors.length > 0) {
     return res.status(400).json({ errors });
   }
 
   try {
-    await updateBusiness(business.id, { name: businessName, businessProfile: updatedProfile });
-    const updatedBusiness = await getBusinessById(business.id);
-    res.status(200).json(businessToSettingsJson(updatedBusiness));
+    const passwordHash = await bcrypt.hash(password, BCRYPT_COST_FACTOR);
+    const business = await createBusiness({ name, email, passwordHash, businessProfile });
+    const { token, expiresAt } = await createBusinessSession(business.id);
+
+    res.status(201).json({ token, expiresAt, businessId: business.id });
   } catch (err) {
-    console.error('[API UPDATE SETTINGS ERROR]', err);
+    if (err.code === '23505') {
+      const message = err.constraint === 'businesses_email_key'
+        ? 'A business with that email already exists'
+        : 'A business with that WhatsApp phone number ID or Instagram account ID already exists';
+
+      return res.status(409).json({ error: message });
+    }
+
+    console.error('[BUSINESS SIGNUP ERROR]', err);
+    res.status(500).json({ error: 'Failed to create business' });
+  }
+});
+
+app.post('/api/business-auth/login', async (req, res) => {
+  const { email, password } = req.body || {};
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'email and password are required' });
+  }
+
+  const business = await getBusinessByEmail(email);
+
+  // Always run bcrypt.compare, even when no business/password_hash was
+  // found — comparing against DUMMY_PASSWORD_HASH keeps this request's
+  // timing indistinguishable from a real wrong-password attempt, so a
+  // nonexistent email can't be detected by response time. See
+  // DUMMY_PASSWORD_HASH's own comment for why this matters.
+  const passwordMatches = await bcrypt.compare(password, business?.password_hash || DUMMY_PASSWORD_HASH);
+
+  if (!business || !business.password_hash || !passwordMatches) {
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  const { token, expiresAt } = await createBusinessSession(business.id);
+  res.status(200).json({ token, expiresAt, businessId: business.id });
+});
+
+app.post('/api/business-auth/logout', requireBusinessAuth, async (req, res) => {
+  const [, token] = req.headers.authorization.split(' ');
+  await deleteBusinessSession(token);
+  res.sendStatus(204);
+});
+
+// ---------------------------------------------------------------------
+// "MY BUSINESS" API — scoped to the caller's own business via
+// requireBusinessAuth's req.businessId, never a URL param. Same data/
+// validation as the admin /api/businesses/:id/* routes above, just
+// reachable without knowing (or being able to guess) a business ID.
+// ---------------------------------------------------------------------
+
+app.get('/api/my-business/dashboard', requireBusinessAuth, async (req, res) => {
+  const dashboard = await buildDashboardJson(req.businessId);
+
+  if (!dashboard) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  res.status(200).json(dashboard);
+});
+
+app.get('/api/my-business/settings', requireBusinessAuth, async (req, res) => {
+  const business = await getBusinessById(req.businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  res.status(200).json(businessToSettingsJson(business));
+});
+
+app.put('/api/my-business/settings', requireBusinessAuth, async (req, res) => {
+  const business = await getBusinessById(req.businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  try {
+    const result = await applySettingsUpdate(business, req.body || {});
+
+    if (result.errors) {
+      return res.status(400).json({ errors: result.errors });
+    }
+
+    res.status(200).json(result.settings);
+  } catch (err) {
+    console.error('[MY BUSINESS UPDATE SETTINGS ERROR]', err);
     res.status(500).json({ error: 'Failed to save settings' });
   }
 });
