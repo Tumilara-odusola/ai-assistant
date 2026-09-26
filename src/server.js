@@ -41,6 +41,7 @@ const {
   getAllBusinesses,
   createBusiness,
   updateBusiness,
+  updateBusinessChannels,
   createEscalation,
   getUnresolvedEscalations,
   resolveEscalation,
@@ -3862,6 +3863,88 @@ app.put('/api/my-business/settings', requireBusinessAuth, async (req, res) => {
   } catch (err) {
     console.error('[MY BUSINESS UPDATE SETTINGS ERROR]', err);
     res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+// Loosely E.164-shaped — not strict, just a sanity check like the rest of
+// this app's validation (see MIN_PASSWORD_LENGTH/EMAIL_REGEX above).
+const PHONE_NUMBER_REGEX = /^\+?[1-9]\d{6,14}$/;
+
+// Field requirements per channel — name here is the request-body key,
+// dbField is the argument name updateBusinessChannels expects.
+const CHANNEL_FIELD_SPECS = {
+  whatsapp: [
+    { name: 'phoneNumberId', dbField: 'whatsappPhoneNumberId' },
+    { name: 'token', dbField: 'whatsappToken' }
+  ],
+  instagram: [
+    { name: 'accountId', dbField: 'instagramAccountId' },
+    { name: 'token', dbField: 'instagramToken' }
+  ],
+  messenger: [
+    { name: 'pageId', dbField: 'facebookPageId' },
+    { name: 'token', dbField: 'facebookPageToken' }
+  ],
+  voice: [
+    { name: 'phoneNumber', dbField: 'twilioPhoneNumber' }
+  ]
+};
+
+const CHANNEL_CONFLICT_MESSAGES = {
+  businesses_whatsapp_phone_number_id_key: 'That WhatsApp phone number ID is already connected to another business',
+  businesses_instagram_account_id_key: 'That Instagram account ID is already connected to another business',
+  businesses_facebook_page_id_key: 'That Facebook Page ID is already connected to another business',
+  businesses_twilio_phone_number_key: 'That phone number is already connected to another business'
+};
+
+app.put('/api/my-business/channels', requireBusinessAuth, async (req, res) => {
+  const body = req.body || {};
+  const channel = body.channel;
+  const spec = CHANNEL_FIELD_SPECS[channel];
+
+  if (!spec) {
+    return res.status(400).json({ error: 'channel must be one of: whatsapp, instagram, messenger, voice' });
+  }
+
+  const errors = [];
+  const updateFields = {};
+
+  for (const { name, dbField } of spec) {
+    const value = typeof body[name] === 'string' ? body[name].trim() : '';
+
+    if (!value) {
+      errors.push(`${name} is required`);
+      continue;
+    }
+
+    if (name === 'phoneNumber' && !PHONE_NUMBER_REGEX.test(value)) {
+      errors.push('phoneNumber must look like a real phone number, e.g. +15551234567');
+      continue;
+    }
+
+    updateFields[dbField] = value;
+  }
+
+  if (errors.length > 0) {
+    return res.status(400).json({ errors });
+  }
+
+  try {
+    const business = await updateBusinessChannels(req.businessId, updateFields);
+
+    if (!business) {
+      return res.status(404).json({ error: 'Business not found' });
+    }
+
+    res.status(200).json({ channels: businessToSettingsJson(business).channels });
+  } catch (err) {
+    if (err.code === '23505') {
+      const message = CHANNEL_CONFLICT_MESSAGES[err.constraint] || 'That value is already connected to another business';
+      return res.status(409).json({ error: message });
+    }
+
+    console.error('[UPDATE CHANNELS ERROR]', err);
+    res.status(500).json({ error: 'Failed to save channel' });
   }
 });
 

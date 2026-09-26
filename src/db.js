@@ -470,6 +470,45 @@ async function updateBusiness(id, { name, businessProfile }) {
   return decryptBusinessRow(rows[0]) || null;
 }
 
+// Partial update for one channel's routing ID/credential — COALESCE means
+// only the columns for the channel actually being connected change; every
+// other channel's existing values (including ones not passed here) are
+// left untouched. Tokens are encrypted the same way createBusiness does.
+async function updateBusinessChannels(id, {
+  whatsappPhoneNumberId,
+  whatsappToken,
+  instagramAccountId,
+  instagramToken,
+  facebookPageId,
+  facebookPageToken,
+  twilioPhoneNumber
+}) {
+  const { rows } = await pool.query(
+    `UPDATE businesses SET
+       whatsapp_phone_number_id = COALESCE($1, whatsapp_phone_number_id),
+       whatsapp_token = COALESCE($2, whatsapp_token),
+       instagram_account_id = COALESCE($3, instagram_account_id),
+       instagram_token = COALESCE($4, instagram_token),
+       facebook_page_id = COALESCE($5, facebook_page_id),
+       facebook_page_token = COALESCE($6, facebook_page_token),
+       twilio_phone_number = COALESCE($7, twilio_phone_number)
+     WHERE id = $8
+     RETURNING *`,
+    [
+      whatsappPhoneNumberId || null,
+      encryptToken(whatsappToken || null),
+      instagramAccountId || null,
+      encryptToken(instagramToken || null),
+      facebookPageId || null,
+      encryptToken(facebookPageToken || null),
+      twilioPhoneNumber || null,
+      id
+    ]
+  );
+
+  return decryptBusinessRow(rows[0]) || null;
+}
+
 async function createEscalation({ businessId, platform, senderId, messageText }) {
   await pool.query(
     `INSERT INTO escalated_conversations (business_id, platform, sender_id, message_text)
@@ -633,6 +672,7 @@ module.exports = {
   getAllBusinesses,
   createBusiness,
   updateBusiness,
+  updateBusinessChannels,
   createEscalation,
   getUnresolvedEscalations,
   resolveEscalation,
