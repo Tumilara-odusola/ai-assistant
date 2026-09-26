@@ -27,6 +27,7 @@ const {
 const { computeAvailableSlots, confirmBooking } = require('./booking');
 const { confirmOrder } = require('./orders');
 const { verifyPaystackSignature } = require('./paystack');
+const { sendRecoveryEmail } = require('./email');
 const {
   pool,
   initDatabase,
@@ -3300,18 +3301,13 @@ function renderRecoverForm({ values, result }) {
 
   let resultHtml = '';
 
-  if (result?.type === 'success') {
+  if (result?.type === 'sent') {
     resultHtml = `<div class="result success">
-      <p><strong>Found it!</strong> Here's your dashboard link:</p>
-      <div class="link-box"><a href="${escapeHtml(result.dashboardUrl)}">${escapeHtml(result.dashboardUrl)}</a></div>
+      <p>If that business name and email match an account, we've sent the dashboard link to that email address.</p>
     </div>`;
   } else if (result?.type === 'no_recovery_email') {
     resultHtml = `<div class="result alert">
       <p>We found a business with that name, but no recovery email was ever set up for it. There's no automatic way to recover this link — please contact us directly for help.</p>
-    </div>`;
-  } else if (result?.type === 'not_found') {
-    resultHtml = `<div class="result alert">
-      <p>We couldn't find a match for that business name and email. Double-check both and try again.</p>
     </div>`;
   }
 
@@ -3356,16 +3352,6 @@ function renderRecoverForm({ values, result }) {
     color: var(--muted);
     font-size: 14px;
     margin: 0 0 20px;
-  }
-  .disclosure {
-    background: rgba(74, 93, 87, 0.08);
-    border: 1px solid rgba(26, 46, 43, 0.2);
-    color: var(--muted);
-    padding: 12px 16px;
-    border-radius: 4px;
-    font-size: 12px;
-    line-height: 1.5;
-    margin-bottom: 28px;
   }
   label {
     display: block;
@@ -3418,23 +3404,12 @@ function renderRecoverForm({ values, result }) {
     border: 1px solid var(--alert);
     color: var(--alert);
   }
-  .link-box {
-    margin-top: 8px;
-    word-break: break-all;
-  }
-  .link-box a {
-    color: var(--accent);
-  }
 </style>
 </head>
 <body>
 <div class="page">
   <h1>Recover Your Dashboard Link</h1>
-  <p class="intro">Enter your business name and recovery email to look up your dashboard link.</p>
-
-  <div class="disclosure">
-    <strong>Note:</strong> this isn't a secure password reset — anyone who knows your business name and recovery email can retrieve this link. If that's a concern, contact us directly instead.
-  </div>
+  <p class="intro">Enter your business name and recovery email — if they match an account, we'll email you the dashboard link.</p>
 
   <form method="POST" action="/recover-dashboard-link">
     <label for="businessName">Business name</label>
@@ -3465,15 +3440,38 @@ app.post('/recover-dashboard-link', async (req, res) => {
 
   let result;
 
-  if (!business) {
-    result = { type: 'not_found' };
-  } else if (!business.recovery_email) {
+  if (business && !business.recovery_email) {
+    // A genuinely different, legitimate case — the business exists but was
+    // never set up with a recovery email, so there's nothing to send to.
+    // Worth surfacing plainly rather than folding into the generic
+    // response below, which would silently fail a real business owner.
     result = { type: 'no_recovery_email' };
-  } else if (business.recovery_email.trim().toLowerCase() !== recoveryEmail.toLowerCase()) {
-    result = { type: 'not_found' };
   } else {
-    const dashboardUrl = `${req.protocol}://${req.get('host')}/my-dashboard/${business.dashboard_token}`;
-    result = { type: 'success', dashboardUrl };
+    const isMatch = Boolean(
+      business &&
+      business.recovery_email &&
+      business.recovery_email.trim().toLowerCase() === recoveryEmail.toLowerCase()
+    );
+
+    if (isMatch) {
+      const dashboardUrl = `${req.protocol}://${req.get('host')}/my-dashboard/${business.dashboard_token}`;
+
+      try {
+        await sendRecoveryEmail(recoveryEmail, business.name, dashboardUrl);
+      } catch (err) {
+        // Never let a send failure change the response below — that would
+        // leak whether businessName+recoveryEmail matched via an error
+        // appearing only on real matches. Logged so we notice; currently
+        // expected to fail for any recipient other than the Resend
+        // account's own email, until a custom sending domain is verified.
+        console.error('[RECOVERY EMAIL ERROR]', err);
+      }
+    }
+
+    // Identical response whether this was a real match or not — a wrong
+    // guess and a real match must look the same from the outside, or the
+    // response itself becomes a way to enumerate valid name+email pairs.
+    result = { type: 'sent' };
   }
 
   res.type('html').send(renderRecoverForm({ values: body, result }));
