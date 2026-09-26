@@ -3557,6 +3557,32 @@ async function buildDashboardJson(businessId) {
   };
 }
 
+// Reuses computeTodaySummary (already the single source of truth for
+// "booking + order revenue on a given date") once per day over the last
+// 7 days, rather than duplicating that revenue math here. fetchDashboardData
+// already pulls every booking/order for the business in one query, so this
+// adds no extra DB round-trips beyond the one dashboard JSON already needs.
+async function buildRevenueTrendJson(businessId) {
+  const { businessProfile, bookings, orders } = await fetchDashboardData(businessId);
+
+  if (!businessProfile) {
+    return null;
+  }
+
+  const currency = businessProfile?.currency || 'NGN';
+  const days = [];
+
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dateStr = formatDateYYYYMMDD(date);
+    const summary = computeTodaySummary(businessProfile, bookings, orders, dateStr);
+    days.push({ date: dateStr, revenue: summary.revenue });
+  }
+
+  return { currency, days };
+}
+
 app.get('/api/businesses/:id/dashboard', requireApiAuth, async (req, res) => {
   const businessId = parseInt(req.params.id, 10);
 
@@ -3833,6 +3859,16 @@ app.get('/api/my-business/dashboard', requireBusinessAuth, async (req, res) => {
   }
 
   res.status(200).json(dashboard);
+});
+
+app.get('/api/my-business/revenue-trend', requireBusinessAuth, async (req, res) => {
+  const trend = await buildRevenueTrendJson(req.businessId);
+
+  if (!trend) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  res.status(200).json(trend);
 });
 
 app.get('/api/my-business/settings', requireBusinessAuth, async (req, res) => {
