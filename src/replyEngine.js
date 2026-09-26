@@ -132,4 +132,46 @@ function computeTypingDelayMs(replyText) {
   return Math.min(base + replyText.length * perChar + jitter, 9000);
 }
 
-module.exports = { generateReply, computeTypingDelayMs, buildSystemPrompt };
+// Same provider dispatch as generateReply, but with an empty history —
+// generateReply's own prompt is booking/order-specific (markers, available
+// slots) and isn't reusable for a one-off task like writing a caption.
+async function callProviderWithPrompt(systemPrompt, userMessage) {
+  if (PROVIDER === 'groq') return callGroq(systemPrompt, [], userMessage);
+  if (PROVIDER === 'gemini') return callGemini(systemPrompt, [], userMessage);
+  return callAnthropic(systemPrompt, [], userMessage);
+}
+
+// item is a snapshot of the service/product the photo is of ({ name, price,
+// description }), or null if the business didn't pick one — not the photo
+// itself. No vision model is wired up in this app, so the caption is
+// grounded in the business's own real data (name/price/description/voice),
+// not an analysis of the image's actual pixels.
+function buildCaptionPrompt(businessProfile, item, platform) {
+  const { businessName, voice } = businessProfile;
+
+  const itemLine = item && item.name
+    ? `The photo is of: ${item.name}` +
+      (item.price ? ` (₦${item.price})` : '') +
+      (item.description ? ` — ${item.description}` : '') +
+      '.'
+    : 'No specific product or service was specified for this photo.';
+
+  return `You are writing a short social media caption for ${businessName}, a real small business, to post on ${platform}.
+
+VOICE:
+- Tone: ${voice.tone}
+- Emoji: ${voice.useEmoji ? 'use occasionally, naturally' : 'do not use emoji'}
+- NEVER use these phrases (they sound like an AI bot, not a real staff member): ${voice.avoidPhrases.join(', ')}
+
+${itemLine}
+
+Write ONE caption only — no options, no explanation, no surrounding quotation marks. Keep it under 300 characters. End with 2-4 relevant hashtags. Do not invent details about the product/service beyond what's given above.`;
+}
+
+async function generateCaption(businessProfile, item, platform) {
+  const systemPrompt = buildCaptionPrompt(businessProfile, item, platform);
+  const caption = await callProviderWithPrompt(systemPrompt, 'Write the caption now.');
+  return caption.trim();
+}
+
+module.exports = { generateReply, computeTypingDelayMs, buildSystemPrompt, generateCaption };

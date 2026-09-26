@@ -17,12 +17,14 @@ require('dotenv').config({ override: true });
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
+const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const {
   generateReply,
-  computeTypingDelayMs
+  computeTypingDelayMs,
+  generateCaption
 } = require('./replyEngine');
 const { computeAvailableSlots, confirmBooking } = require('./booking');
 const { confirmOrder } = require('./orders');
@@ -52,7 +54,14 @@ const {
   createBusinessSession,
   getBusinessSessionByToken,
   deleteBusinessSession,
-  cleanupExpiredBusinessSessions
+  cleanupExpiredBusinessSessions,
+  setAutoPostingEnabled,
+  createPost,
+  updatePost,
+  getPostsForBusiness,
+  getPostImage,
+  getDuePosts,
+  markPostStatus
 } = require('./db');
 const { setupVoiceWebSocket } = require('./voice');
 
@@ -472,6 +481,49 @@ setInterval(() => {
     console.error('[BUSINESS SESSION CLEANUP ERROR]', err);
   });
 }, ADMIN_SESSION_CLEANUP_INTERVAL_MS);
+
+// ---------------------------------------------------------------------
+// SOCIAL MEDIA AUTO-POSTING SCHEDULER
+// Same setInterval-sweep pattern as cleanupStaleConversations above. This
+// only ever LOGS what would be posted and flips status to 'would-publish'
+// — it never calls Meta's actual publish endpoint. Real publishing needs
+// instagram_business_content_publish, which needs the same business
+// verification this app is already blocked on for messaging.
+// ---------------------------------------------------------------------
+
+const POST_SCHEDULER_INTERVAL_MS = 60 * 1000; // check for due posts every minute
+
+async function publishDuePosts() {
+  const duePosts = await getDuePosts();
+
+  for (const post of duePosts) {
+    // Safety net: a business may have turned auto-posting off after this
+    // post was already scheduled. Skip it rather than "publishing" anyway.
+    if (!post.auto_posting_enabled) {
+      console.log(
+        `[POST SCHEDULER] Skipping post ${post.id} — auto-posting is off for business ${post.business_id}`
+      );
+      continue;
+    }
+
+    console.log(
+      `[WOULD PUBLISH] business=${post.business_id} platform=${post.platform} ` +
+      `caption="${(post.caption || '').slice(0, 80)}" image=${post.image_content_type}, ${post.image_data.length} bytes`
+    );
+
+    try {
+      await markPostStatus(post.id, 'would-publish');
+    } catch (err) {
+      console.error('[POST STATUS UPDATE ERROR]', err);
+    }
+  }
+}
+
+setInterval(() => {
+  publishDuePosts().catch((err) => {
+    console.error('[POST SCHEDULER ERROR]', err);
+  });
+}, POST_SCHEDULER_INTERVAL_MS);
 
 async function processMetaWebhook(body) {
   const entries = body.entry || [];
@@ -3982,6 +4034,198 @@ app.put('/api/my-business/channels', requireBusinessAuth, async (req, res) => {
     console.error('[UPDATE CHANNELS ERROR]', err);
     res.status(500).json({ error: 'Failed to save channel' });
   }
+});
+
+// ---------------------------------------------------------------------
+// SOCIAL MEDIA AUTO-POSTING API
+// Photos are uploaded as multipart/form-data (multer, in-memory, 5MB cap)
+// and stored as bytes in Postgres — see the posts table comment in db.js
+// for why there's no object storage/CDN behind this. Captions are real AI
+// generation via replyEngine's generateCaption; only the final "publish to
+// Instagram/Facebook" call is stubbed (see publishDuePosts above).
+// ---------------------------------------------------------------------
+
+const postImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only image files are allowed'));
+    }
+    cb(null, true);
+  }
+});
+
+// Wraps multer's middleware so a bad upload (too large, wrong type) comes
+// back as a normal { error } JSON response instead of an unhandled
+// exception — multer reports failures via the callback's err argument, not
+// by throwing where try/catch could see it.
+function handlePostImageUpload(req, res, next) {
+  postImageUpload.single('image')(req, res, (err) => {
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'Image must be 5MB or smaller' });
+    }
+
+    if (err) {
+      return res.status(400).json({ error: err.message || 'Failed to process uploaded image' });
+    }
+
+    next();
+  });
+}
+
+const POST_PLATFORMS = ['instagram', 'facebook'];
+
+function postToJson(row) {
+  return {
+    id: row.id,
+    productName: row.product_name,
+    platform: row.platform,
+    caption: row.caption,
+    scheduledFor: row.scheduled_for,
+    status: row.status,
+    createdAt: row.created_at,
+    imageUrl: `/api/my-business/posts/${row.id}/image`
+  };
+}
+
+app.get('/api/my-business/auto-posting', requireBusinessAuth, async (req, res) => {
+  const business = await getBusinessById(req.businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  res.status(200).json({ enabled: Boolean(business.auto_posting_enabled) });
+});
+
+app.put('/api/my-business/auto-posting', requireBusinessAuth, async (req, res) => {
+  const enabled = Boolean(req.body?.enabled);
+  const updated = await setAutoPostingEnabled(req.businessId, enabled);
+
+  if (updated === null) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  res.status(200).json({ enabled: updated });
+});
+
+app.post('/api/my-business/posts', requireBusinessAuth, handlePostImageUpload, async (req, res) => {
+  const business = await getBusinessById(req.businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  if (!business.auto_posting_enabled) {
+    return res.status(403).json({ error: 'Auto-posting is turned off for this business — turn it on first' });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'An image file is required' });
+  }
+
+  const platform = req.body?.platform;
+
+  if (!POST_PLATFORMS.includes(platform)) {
+    return res.status(400).json({ error: `platform must be one of: ${POST_PLATFORMS.join(', ')}` });
+  }
+
+  const productName = typeof req.body?.productName === 'string' ? req.body.productName.trim() : '';
+  const profile = business.business_profile || {};
+  const item = [...(profile.services || []), ...(profile.products || [])]
+    .find((entry) => entry.name === productName) || (productName ? { name: productName } : null);
+
+  let caption;
+
+  try {
+    caption = await generateCaption(profile, item, platform);
+  } catch (err) {
+    console.error('[GENERATE CAPTION ERROR]', err);
+    return res.status(502).json({ error: 'Failed to generate a caption — try again in a moment' });
+  }
+
+  try {
+    const post = await createPost({
+      businessId: req.businessId,
+      imageData: req.file.buffer,
+      imageContentType: req.file.mimetype,
+      productName: productName || null,
+      platform,
+      caption
+    });
+
+    res.status(201).json(postToJson(post));
+  } catch (err) {
+    console.error('[CREATE POST ERROR]', err);
+    res.status(500).json({ error: 'Failed to save post' });
+  }
+});
+
+app.get('/api/my-business/posts', requireBusinessAuth, async (req, res) => {
+  const posts = await getPostsForBusiness(req.businessId);
+  res.status(200).json({ posts: posts.map(postToJson) });
+});
+
+app.put('/api/my-business/posts/:id', requireBusinessAuth, async (req, res) => {
+  const postId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(postId)) {
+    return res.status(400).json({ error: 'post id must be an integer' });
+  }
+
+  const body = req.body || {};
+  const caption = typeof body.caption === 'string' ? body.caption.trim() : undefined;
+  let scheduledFor;
+
+  if (body.scheduledFor !== undefined) {
+    const business = await getBusinessById(req.businessId);
+
+    if (!business?.auto_posting_enabled) {
+      return res.status(403).json({ error: 'Auto-posting is turned off for this business — turn it on first' });
+    }
+
+    const parsed = new Date(body.scheduledFor);
+
+    if (Number.isNaN(parsed.getTime())) {
+      return res.status(400).json({ error: 'scheduledFor must be a valid date/time' });
+    }
+
+    scheduledFor = parsed;
+  }
+
+  try {
+    const post = await updatePost(postId, req.businessId, {
+      caption: caption ?? null,
+      scheduledFor: scheduledFor ?? null
+    });
+
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    res.status(200).json(postToJson(post));
+  } catch (err) {
+    console.error('[UPDATE POST ERROR]', err);
+    res.status(500).json({ error: 'Failed to update post' });
+  }
+});
+
+app.get('/api/my-business/posts/:id/image', requireBusinessAuth, async (req, res) => {
+  const postId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(postId)) {
+    return res.status(400).json({ error: 'post id must be an integer' });
+  }
+
+  const image = await getPostImage(postId, req.businessId);
+
+  if (!image) {
+    return res.status(404).json({ error: 'Post not found' });
+  }
+
+  res.set('Content-Type', image.image_content_type);
+  res.send(image.image_data);
 });
 
 // ---------------------------------------------------------------------

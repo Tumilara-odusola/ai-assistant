@@ -281,6 +281,36 @@ async function initDatabase() {
       expires_at TIMESTAMP NOT NULL
     )
   `);
+
+  // Master on/off switch for the social media auto-posting feature — the
+  // scheduler (publishDuePosts in server.js) skips a business's due posts
+  // entirely when this is false, even if they were scheduled before it was
+  // turned off.
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS auto_posting_enabled BOOLEAN DEFAULT false
+  `);
+
+  // Images are stored as bytes in Postgres (image_data/image_content_type)
+  // rather than a URL — there's no object storage set up, and Railway's app
+  // container filesystem doesn't survive redeploys. product_name is a text
+  // snapshot, same as bookings.service/orders.product_name, not a foreign
+  // key — services/products live in business_profile JSONB with no stable
+  // row ids to key against.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS posts (
+      id SERIAL PRIMARY KEY,
+      business_id INTEGER REFERENCES businesses(id),
+      image_data BYTEA NOT NULL,
+      image_content_type TEXT NOT NULL,
+      product_name TEXT,
+      platform TEXT NOT NULL,
+      caption TEXT,
+      scheduled_for TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'generated',
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
 }
 
 // Generates a dashboard_token for any business row that doesn't have one
@@ -657,6 +687,86 @@ async function cleanupExpiredBusinessSessions() {
   return result.rowCount;
 }
 
+async function setAutoPostingEnabled(businessId, enabled) {
+  const { rows } = await pool.query(
+    'UPDATE businesses SET auto_posting_enabled = $1 WHERE id = $2 RETURNING auto_posting_enabled',
+    [enabled, businessId]
+  );
+
+  return rows[0] ? rows[0].auto_posting_enabled : null;
+}
+
+// Columns list excludes image_data on purpose — callers that only need
+// metadata (list/update) shouldn't pull the image bytes along for the ride.
+const POST_METADATA_COLUMNS =
+  'id, business_id, product_name, platform, caption, scheduled_for, status, created_at';
+
+async function createPost({ businessId, imageData, imageContentType, productName, platform, caption }) {
+  const { rows } = await pool.query(
+    `INSERT INTO posts (business_id, image_data, image_content_type, product_name, platform, caption, status)
+     VALUES ($1, $2, $3, $4, $5, $6, 'generated')
+     RETURNING ${POST_METADATA_COLUMNS}`,
+    [businessId, imageData, imageContentType, productName || null, platform, caption]
+  );
+
+  return rows[0];
+}
+
+// Scoped by business_id, not just id — same reasoning as resolveEscalation:
+// a post id alone must never let one business touch another's post.
+// scheduledFor flips status to 'pending' only when it's actually being set
+// (not on a caption-only edit); COALESCE means an omitted field is left
+// untouched rather than being wiped to NULL.
+async function updatePost(id, businessId, { caption, scheduledFor }) {
+  const { rows } = await pool.query(
+    `UPDATE posts SET
+       caption = COALESCE($1, caption),
+       scheduled_for = COALESCE($2::timestamp, scheduled_for),
+       status = CASE WHEN $2::timestamp IS NOT NULL THEN 'pending' ELSE status END
+     WHERE id = $3 AND business_id = $4
+     RETURNING ${POST_METADATA_COLUMNS}`,
+    [caption ?? null, scheduledFor ?? null, id, businessId]
+  );
+
+  return rows[0] || null;
+}
+
+async function getPostsForBusiness(businessId) {
+  const { rows } = await pool.query(
+    `SELECT ${POST_METADATA_COLUMNS} FROM posts WHERE business_id = $1 ORDER BY created_at DESC`,
+    [businessId]
+  );
+
+  return rows;
+}
+
+async function getPostImage(id, businessId) {
+  const { rows } = await pool.query(
+    'SELECT image_data, image_content_type FROM posts WHERE id = $1 AND business_id = $2',
+    [id, businessId]
+  );
+
+  return rows[0] || null;
+}
+
+// Joins businesses so the caller can double-check auto_posting_enabled at
+// publish time too, not just at creation/scheduling time — belt-and-
+// suspenders in case a business turns the feature off after scheduling.
+async function getDuePosts() {
+  const { rows } = await pool.query(`
+    SELECT posts.*, businesses.auto_posting_enabled
+    FROM posts
+    JOIN businesses ON businesses.id = posts.business_id
+    WHERE posts.status = 'pending' AND posts.scheduled_for <= NOW()
+  `);
+
+  return rows;
+}
+
+async function markPostStatus(id, status) {
+  await pool.query('UPDATE posts SET status = $1 WHERE id = $2', [status, id]);
+}
+
 module.exports = {
   pool,
   initDatabase,
@@ -683,5 +793,12 @@ module.exports = {
   createBusinessSession,
   getBusinessSessionByToken,
   deleteBusinessSession,
-  cleanupExpiredBusinessSessions
+  cleanupExpiredBusinessSessions,
+  setAutoPostingEnabled,
+  createPost,
+  updatePost,
+  getPostsForBusiness,
+  getPostImage,
+  getDuePosts,
+  markPostStatus
 };
