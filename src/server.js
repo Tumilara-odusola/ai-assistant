@@ -3964,6 +3964,28 @@ app.get('/api/businesses/:id/settings', requireApiAuth, async (req, res) => {
   res.status(200).json(businessToSettingsJson(business));
 });
 
+// TEMPORARY — diagnostic only, remove once the business_id=1 email/
+// password_hash question is answered. Existence-only (booleans), never
+// the actual email or hash.
+app.get('/api/businesses/:id/auth-status', requireApiAuth, async (req, res) => {
+  const businessId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(businessId)) {
+    return res.status(400).json({ error: 'businessId must be an integer' });
+  }
+
+  const business = await getBusinessById(businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  res.status(200).json({
+    hasEmail: Boolean(business.email),
+    hasPasswordHash: Boolean(business.password_hash)
+  });
+});
+
 // Validates a JSON-shaped offering row array (services or products) using
 // the same rules parseOfferingRows enforces for the HTML form — just
 // operating on real JSON types instead of parallel form-string arrays.
