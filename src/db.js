@@ -532,6 +532,20 @@ async function updateBusiness(id, { name, businessProfile }) {
   return decryptBusinessRow(rows[0]) || null;
 }
 
+// Admin-only credential set/reset — lets a business that predates the
+// email/password login system (e.g. business_id=1, migrated from the
+// original single-tenant businessProfile.json) get set up with one, or
+// resets a business's login if they're locked out. passwordHash is
+// already bcrypt-hashed by the caller, same as createBusiness.
+async function setBusinessCredentials(id, { email, passwordHash }) {
+  const { rows } = await pool.query(
+    `UPDATE businesses SET email = $1, password_hash = $2 WHERE id = $3 RETURNING id, email`,
+    [email, passwordHash, id]
+  );
+
+  return rows[0] || null;
+}
+
 // Partial update for one channel's routing ID/credential — COALESCE means
 // only the columns for the channel actually being connected change; every
 // other channel's existing values (including ones not passed here) are
@@ -883,6 +897,7 @@ module.exports = {
   getAllBusinesses,
   createBusiness,
   updateBusiness,
+  setBusinessCredentials,
   updateBusinessChannels,
   createEscalation,
   getUnresolvedEscalations,

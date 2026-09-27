@@ -44,6 +44,7 @@ const {
   getAllBusinesses,
   createBusiness,
   updateBusiness,
+  setBusinessCredentials,
   updateBusinessChannels,
   createEscalation,
   getUnresolvedEscalations,
@@ -3964,28 +3965,6 @@ app.get('/api/businesses/:id/settings', requireApiAuth, async (req, res) => {
   res.status(200).json(businessToSettingsJson(business));
 });
 
-// TEMPORARY — diagnostic only, remove once the business_id=1 email/
-// password_hash question is answered. Existence-only (booleans), never
-// the actual email or hash.
-app.get('/api/businesses/:id/auth-status', requireApiAuth, async (req, res) => {
-  const businessId = parseInt(req.params.id, 10);
-
-  if (!Number.isInteger(businessId)) {
-    return res.status(400).json({ error: 'businessId must be an integer' });
-  }
-
-  const business = await getBusinessById(businessId);
-
-  if (!business) {
-    return res.status(404).json({ error: 'Business not found' });
-  }
-
-  res.status(200).json({
-    hasEmail: Boolean(business.email),
-    hasPasswordHash: Boolean(business.password_hash)
-  });
-});
-
 // Validates a JSON-shaped offering row array (services or products) using
 // the same rules parseOfferingRows enforces for the HTML form — just
 // operating on real JSON types instead of parallel form-string arrays.
@@ -4100,6 +4079,49 @@ app.put('/api/businesses/:id/settings', requireApiAuth, async (req, res) => {
   } catch (err) {
     console.error('[API UPDATE SETTINGS ERROR]', err);
     res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+// Admin-only: set or reset a business's business-auth login (email +
+// password). Needed for businesses that predate that system entirely
+// (business_id=1, migrated from the original single-tenant
+// businessProfile.json, has no email/password_hash) as well as for
+// resetting a locked-out business's credentials.
+app.put('/api/businesses/:id/credentials', requireApiAuth, async (req, res) => {
+  const businessId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(businessId)) {
+    return res.status(400).json({ error: 'businessId must be an integer' });
+  }
+
+  const body = req.body || {};
+  const email = typeof body.email === 'string' ? body.email.trim() : '';
+  const password = typeof body.password === 'string' ? body.password : '';
+
+  const errors = validateEmailAndPassword({ email, password });
+
+  if (errors.length > 0) {
+    return res.status(400).json({ errors });
+  }
+
+  const business = await getBusinessById(businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, BCRYPT_COST_FACTOR);
+    const updated = await setBusinessCredentials(businessId, { email, passwordHash });
+
+    res.status(200).json({ id: updated.id, email: updated.email });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'A business with that email already exists' });
+    }
+
+    console.error('[SET BUSINESS CREDENTIALS ERROR]', err);
+    res.status(500).json({ error: 'Failed to set credentials' });
   }
 });
 
