@@ -291,6 +291,29 @@ async function initDatabase() {
     ADD COLUMN IF NOT EXISTS auto_posting_enabled BOOLEAN DEFAULT false
   `);
 
+  // Durable log of every customer/assistant message — separate from the
+  // in-memory `conversations` cache in server.js, which exists only to
+  // bound the AI's prompt context (last 20 messages, 24h TTL) and is
+  // unaffected by this table. This is what backs the inbox UI. Retained
+  // 90 days (see cleanupOldMessages), unlike bookings/orders/escalations/
+  // posts, which have no automatic expiry.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY,
+      business_id INTEGER REFERENCES businesses(id),
+      platform TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS messages_business_sender_idx
+    ON messages (business_id, sender_id, created_at)
+  `);
+
   // Expo push token for this business's registered device. One per
   // business (overwritten on re-registration) — matches the "one business,
   // one dashboard" model everywhere else in this schema; no multi-device
@@ -785,6 +808,58 @@ async function getPushToken(businessId) {
   return rows[0]?.push_token || null;
 }
 
+async function createMessage({ businessId, platform, senderId, role, content }) {
+  await pool.query(
+    `INSERT INTO messages (business_id, platform, sender_id, role, content)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [businessId, platform, senderId, role, content]
+  );
+}
+
+// One row per distinct (platform, sender_id) thread, carrying that
+// thread's single most recent message as the inbox preview. The inner
+// DISTINCT ON picks the latest row per thread; the outer query re-sorts
+// those threads by recency (DISTINCT ON itself only guarantees order
+// within each group, not across groups).
+async function getConversationsForBusiness(businessId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM (
+       SELECT DISTINCT ON (platform, sender_id)
+         platform, sender_id, role, content, created_at
+       FROM messages
+       WHERE business_id = $1
+       ORDER BY platform, sender_id, created_at DESC
+     ) latest
+     ORDER BY created_at DESC`,
+    [businessId]
+  );
+
+  return rows;
+}
+
+async function getConversationMessages(businessId, platform, senderId) {
+  const { rows } = await pool.query(
+    `SELECT id, role, content, created_at
+     FROM messages
+     WHERE business_id = $1 AND platform = $2 AND sender_id = $3
+     ORDER BY created_at ASC`,
+    [businessId, platform, senderId]
+  );
+
+  return rows;
+}
+
+// Sweeps messages older than the 90-day retention window — see the
+// messages table comment in initDatabase for why this differs from the
+// indefinite retention everything else in this schema gets.
+async function cleanupOldMessages() {
+  const result = await pool.query(
+    `DELETE FROM messages WHERE created_at < NOW() - INTERVAL '90 days'`
+  );
+
+  return result.rowCount;
+}
+
 // Called when Expo's push API reports DeviceNotRegistered for this token —
 // same "stop sending until it re-registers" cleanup Expo's own docs
 // recommend, so a stale token (uninstalled app, etc.) doesn't keep getting
@@ -829,5 +904,9 @@ module.exports = {
   markPostStatus,
   setPushToken,
   getPushToken,
-  clearPushToken
+  clearPushToken,
+  createMessage,
+  getConversationsForBusiness,
+  getConversationMessages,
+  cleanupOldMessages
 };

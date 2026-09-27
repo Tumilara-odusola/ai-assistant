@@ -65,7 +65,11 @@ const {
   markPostStatus,
   setPushToken,
   getPushToken,
-  clearPushToken
+  clearPushToken,
+  createMessage,
+  getConversationsForBusiness,
+  getConversationMessages,
+  cleanupOldMessages
 } = require('./db');
 const { setupVoiceWebSocket } = require('./voice');
 
@@ -516,6 +520,23 @@ setInterval(() => {
   });
 }, ADMIN_SESSION_CLEANUP_INTERVAL_MS);
 
+// Messages (the durable inbox log, distinct from the in-memory
+// `conversations` cache below) are retained 90 days, not indefinitely —
+// swept once daily.
+const MESSAGE_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+setInterval(() => {
+  cleanupOldMessages()
+    .then((count) => {
+      if (count > 0) {
+        console.log(`[MESSAGE CLEANUP] Removed ${count} message(s) older than 90 days`);
+      }
+    })
+    .catch((err) => {
+      console.error('[MESSAGE CLEANUP ERROR]', err);
+    });
+}, MESSAGE_CLEANUP_INTERVAL_MS);
+
 // ---------------------------------------------------------------------
 // SOCIAL MEDIA AUTO-POSTING SCHEDULER
 // Same setInterval-sweep pattern as cleanupStaleConversations above. This
@@ -948,6 +969,16 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
     role: 'assistant',
     content: reply
   });
+
+  // Durable log for the inbox — sequential awaits (not Promise.all) so the
+  // customer message's created_at is guaranteed to precede the reply's,
+  // keeping the transcript in correct chronological order.
+  try {
+    await createMessage({ businessId, platform, senderId, role: 'customer', content: text });
+    await createMessage({ businessId, platform, senderId, role: 'assistant', content: reply });
+  } catch (err) {
+    console.error('[MESSAGE PERSIST ERROR]', err);
+  }
 
   if (needsHumanReview) {
     console.log(
@@ -1733,7 +1764,7 @@ ${PWA_HEAD_TAGS}
     <p><strong>Your account information.</strong> When you sign up, we collect your name, email address, and a password. Your password is never stored in plain text — we store only a bcrypt hash of it. You may optionally provide a separate recovery email used to regain access to your dashboard if you lose your login.</p>
     <p><strong>Your business configuration.</strong> We store the information you enter to run your assistant: business hours, the services and products you offer (names, prices, descriptions, durations), and your chosen reply voice/tone settings.</p>
     <p><strong>Your channel credentials.</strong> When you connect WhatsApp, Instagram, or Messenger, we store the access tokens Meta issues for your business account, encrypted at rest using AES-256-GCM. These tokens are never stored in plain text. If you connect a voice line via Twilio, we store the phone number used to route calls (this is not a secret credential, so it is not encrypted).</p>
-    <p><strong>Your customers' conversation data.</strong> When a customer messages your business, we process the incoming message text and their platform identifier (a WhatsApp phone number, or an Instagram/Messenger sender ID) in order to generate an AI reply on your behalf. This conversation history is <strong>not stored in our database</strong> — it is held only in server memory for up to 24 hours of inactivity, after which it is automatically and permanently discarded, and it is also cleared any time our servers restart. The one exception: if a message is flagged for human review (for example, it mentions a refund, complaint, or a request to speak to a person), that specific message's text, the customer's platform ID, and the timestamp are saved to your dashboard's escalations list so you can follow up — this record is kept until you resolve it, and is not automatically deleted afterward.</p>
+    <p><strong>Your customers' conversation data.</strong> When a customer messages your business, we process the incoming message text and their platform identifier (a WhatsApp phone number, or an Instagram/Messenger sender ID) in order to generate an AI reply on your behalf. Both the customer's message and the AI's reply are stored in our database so you can view your conversation history in your inbox — see the retention period below. Separately, and only for the purpose of keeping the AI's replies coherent within an ongoing exchange, recent message text is also held temporarily in server memory (used only to generate replies, not a separate retention mechanism). If a message is flagged for human review (for example, it mentions a refund, complaint, or a request to speak to a person), that message's text, the customer's platform ID, and the timestamp are also saved to your dashboard's escalations list so you can follow up — this record is kept until you resolve it, and is not automatically deleted afterward.</p>
     <p><strong>Booking and order records.</strong> When your assistant completes a booking or a sale, we permanently record the details (service or product, date/time or quantity/price, and the customer's platform identifier) so they appear on your dashboard.</p>
     <p><strong>Photos you upload for social posts.</strong> If you use the auto-posting feature, we store the photo you upload and the AI-generated caption in our database until you delete the post or it is published.</p>
     <p><strong>Push notification data.</strong> If you enable push notifications, we store a device token (issued by Expo, Apple/Google's push infrastructure) so we can alert you when a customer conversation needs your attention.</p>
@@ -1763,8 +1794,8 @@ ${PWA_HEAD_TAGS}
   <section>
     <h2>4. Data Retention</h2>
     <ul>
-      <li>Conversation message text: kept in memory only, up to 24 hours of inactivity, then permanently discarded (see above for the escalation exception).</li>
-      <li>Business account, configuration, channel credentials, bookings, orders, escalations, and post photos: retained for as long as your account is active.</li>
+      <li>Conversation message text (customer messages and AI replies): retained for <strong>90 days</strong>, then automatically and permanently deleted. This is a fixed retention window, unlike the categories below.</li>
+      <li>Business account, configuration, channel credentials, bookings, orders, escalations, and post photos: retained for as long as your account is active — no automatic deletion.</li>
       <li>We do not currently offer a self-service "delete my account" option. If you'd like your data deleted, email us at the address below and we will process the request manually.</li>
     </ul>
   </section>
@@ -4315,6 +4346,62 @@ app.post('/api/my-business/escalations/:id/resolve', requireBusinessAuth, async 
   }
 
   res.sendStatus(204);
+});
+
+// threadKey is "platform:senderId" — the same composite key used
+// internally throughout handleIncomingMessage — rather than a bare sender
+// id, since a WhatsApp phone number and an Instagram sender id could
+// otherwise collide as plain strings.
+function parseThreadKey(threadKey) {
+  const separatorIndex = threadKey.indexOf(':');
+
+  if (separatorIndex === -1) {
+    return null;
+  }
+
+  return {
+    platform: threadKey.slice(0, separatorIndex),
+    senderId: threadKey.slice(separatorIndex + 1)
+  };
+}
+
+app.get('/api/my-business/conversations', requireBusinessAuth, async (req, res) => {
+  const conversations = await getConversationsForBusiness(req.businessId);
+
+  res.status(200).json({
+    conversations: conversations.map((c) => ({
+      threadKey: `${c.platform}:${c.sender_id}`,
+      platform: c.platform,
+      senderId: c.sender_id,
+      lastMessage: {
+        role: c.role,
+        content: c.content,
+        createdAt: c.created_at
+      }
+    }))
+  });
+});
+
+app.get('/api/my-business/conversations/:threadKey', requireBusinessAuth, async (req, res) => {
+  const parsed = parseThreadKey(req.params.threadKey);
+
+  if (!parsed) {
+    return res.status(400).json({ error: 'threadKey must be in the form platform:senderId' });
+  }
+
+  const messages = await getConversationMessages(req.businessId, parsed.platform, parsed.senderId);
+
+  res.status(200).json({
+    threadKey: req.params.threadKey,
+    platform: parsed.platform,
+    senderId: parsed.senderId,
+    messages: messages.map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      createdAt: m.created_at
+    }))
+  });
 });
 
 // ---------------------------------------------------------------------
