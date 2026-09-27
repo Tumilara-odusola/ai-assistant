@@ -30,6 +30,7 @@ const { computeAvailableSlots, confirmBooking } = require('./booking');
 const { confirmOrder } = require('./orders');
 const { verifyPaystackSignature } = require('./paystack');
 const { sendRecoveryEmail } = require('./email');
+const { sendPushNotification } = require('./pushNotifications');
 const {
   pool,
   initDatabase,
@@ -61,7 +62,10 @@ const {
   getPostsForBusiness,
   getPostImage,
   getDuePosts,
-  markPostStatus
+  markPostStatus,
+  setPushToken,
+  getPushToken,
+  clearPushToken
 } = require('./db');
 const { setupVoiceWebSocket } = require('./voice');
 
@@ -415,6 +419,36 @@ function extractOrderConfirmation(replyText) {
       quantity: parseInt(quantity.trim(), 10)
     }
   };
+}
+
+// Push body is capped — Expo/the OS truncates long notification text anyway,
+// and this keeps the payload small regardless of platform behavior.
+const ESCALATION_PUSH_BODY_MAX_LENGTH = 150;
+
+// Best-effort by design — called from a try/catch at its one call site.
+// Silently does nothing when the business has no registered device yet
+// (push is opt-in and requires a development build; see notifications.ts
+// on the mobile side).
+async function notifyBusinessOfEscalation(businessId, messageText) {
+  const pushToken = await getPushToken(businessId);
+
+  if (!pushToken) {
+    return;
+  }
+
+  const body = messageText.length > ESCALATION_PUSH_BODY_MAX_LENGTH
+    ? `${messageText.slice(0, ESCALATION_PUSH_BODY_MAX_LENGTH)}…`
+    : messageText;
+
+  const { deviceNotRegistered } = await sendPushNotification(pushToken, {
+    title: 'Needs your attention',
+    body,
+    data: { url: 'autumnassistant://' }
+  });
+
+  if (deviceNotRegistered) {
+    await clearPushToken(businessId);
+  }
 }
 
 const conversations = {};
@@ -929,6 +963,12 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
       });
     } catch (err) {
       console.error('[ESCALATION INSERT ERROR]', err);
+    }
+
+    try {
+      await notifyBusinessOfEscalation(businessId, text);
+    } catch (err) {
+      console.error('[ESCALATION PUSH ERROR]', err);
     }
   }
 
@@ -4034,6 +4074,33 @@ app.put('/api/my-business/channels', requireBusinessAuth, async (req, res) => {
     console.error('[UPDATE CHANNELS ERROR]', err);
     res.status(500).json({ error: 'Failed to save channel' });
   }
+});
+
+app.put('/api/my-business/push-token', requireBusinessAuth, async (req, res) => {
+  const pushToken = typeof req.body?.pushToken === 'string' ? req.body.pushToken.trim() : '';
+
+  if (!pushToken) {
+    return res.status(400).json({ error: 'pushToken is required' });
+  }
+
+  await setPushToken(req.businessId, pushToken);
+  res.sendStatus(204);
+});
+
+app.post('/api/my-business/escalations/:id/resolve', requireBusinessAuth, async (req, res) => {
+  const escalationId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(escalationId)) {
+    return res.status(400).json({ error: 'escalation id must be an integer' });
+  }
+
+  const escalation = await resolveEscalation(escalationId, req.businessId);
+
+  if (!escalation) {
+    return res.status(404).json({ error: 'Escalation not found' });
+  }
+
+  res.sendStatus(204);
 });
 
 // ---------------------------------------------------------------------

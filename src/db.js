@@ -291,6 +291,15 @@ async function initDatabase() {
     ADD COLUMN IF NOT EXISTS auto_posting_enabled BOOLEAN DEFAULT false
   `);
 
+  // Expo push token for this business's registered device. One per
+  // business (overwritten on re-registration) — matches the "one business,
+  // one dashboard" model everywhere else in this schema; no multi-device
+  // fan-out for v1.
+  await pool.query(`
+    ALTER TABLE businesses
+    ADD COLUMN IF NOT EXISTS push_token TEXT
+  `);
+
   // Images are stored as bytes in Postgres (image_data/image_content_type)
   // rather than a URL — there's no object storage set up, and Railway's app
   // container filesystem doesn't survive redeploys. product_name is a text
@@ -767,6 +776,23 @@ async function markPostStatus(id, status) {
   await pool.query('UPDATE posts SET status = $1 WHERE id = $2', [status, id]);
 }
 
+async function setPushToken(businessId, pushToken) {
+  await pool.query('UPDATE businesses SET push_token = $1 WHERE id = $2', [pushToken, businessId]);
+}
+
+async function getPushToken(businessId) {
+  const { rows } = await pool.query('SELECT push_token FROM businesses WHERE id = $1', [businessId]);
+  return rows[0]?.push_token || null;
+}
+
+// Called when Expo's push API reports DeviceNotRegistered for this token —
+// same "stop sending until it re-registers" cleanup Expo's own docs
+// recommend, so a stale token (uninstalled app, etc.) doesn't keep getting
+// retried on every future escalation.
+async function clearPushToken(businessId) {
+  await pool.query('UPDATE businesses SET push_token = NULL WHERE id = $1', [businessId]);
+}
+
 module.exports = {
   pool,
   initDatabase,
@@ -800,5 +826,8 @@ module.exports = {
   getPostsForBusiness,
   getPostImage,
   getDuePosts,
-  markPostStatus
+  markPostStatus,
+  setPushToken,
+  getPushToken,
+  clearPushToken
 };
