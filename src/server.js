@@ -4282,6 +4282,14 @@ app.put('/api/my-business/channels', requireBusinessAuth, async (req, res) => {
   }
 });
 
+// Returns only whether a token is registered, not the token itself — the
+// mobile app can use this to show a "push notifications connected" status
+// without needing the raw device token client-side.
+app.get('/api/my-business/push-token', requireBusinessAuth, async (req, res) => {
+  const pushToken = await getPushToken(req.businessId);
+  res.status(200).json({ registered: Boolean(pushToken) });
+});
+
 app.put('/api/my-business/push-token', requireBusinessAuth, async (req, res) => {
   const pushToken = typeof req.body?.pushToken === 'string' ? req.body.pushToken.trim() : '';
 
