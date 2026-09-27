@@ -1584,6 +1584,212 @@ ${PWA_HEAD_TAGS}
   </div>
 
   <footer>
+    <p>Contact: <a href="mailto:autumnhqapp@gmail.com">autumnhqapp@gmail.com</a> · <a href="/privacy-policy">Privacy Policy</a></p>
+  </footer>
+</div>
+${PWA_REGISTRATION_SCRIPT}
+</body>
+</html>`);
+});
+
+// ---------------------------------------------------------------------
+// PRIVACY POLICY
+// ---------------------------------------------------------------------
+
+app.get('/privacy-policy', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Autumn Assistant</title>
+${PWA_HEAD_TAGS}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F3EC;
+    --text: #1A2E2B;
+    --muted: #4A5D57;
+    --accent: #D4A257;
+    --alert: #8B3A3A;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 60px 20px 80px;
+  }
+  .page {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .back-link {
+    display: inline-block;
+    color: var(--muted);
+    font-size: 13px;
+    text-decoration: none;
+    margin-bottom: 24px;
+  }
+  .back-link:hover {
+    color: var(--accent);
+  }
+  h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: clamp(26px, 6vw, 34px);
+    font-weight: 700;
+    margin: 0 0 8px;
+  }
+  .effective-date {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 40px;
+  }
+  .intro {
+    font-size: 15px;
+    line-height: 1.7;
+    margin: 0 0 40px;
+  }
+  section {
+    margin-bottom: 32px;
+  }
+  h2 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0 0 12px;
+    padding-top: 24px;
+    border-top: 1px solid rgba(26, 46, 43, 0.14);
+  }
+  section:first-of-type h2 {
+    padding-top: 0;
+    border-top: none;
+  }
+  p {
+    font-size: 14px;
+    line-height: 1.7;
+    margin: 0 0 14px;
+    color: var(--text);
+  }
+  p:last-child {
+    margin-bottom: 0;
+  }
+  strong {
+    font-weight: 600;
+  }
+  ul {
+    margin: 0 0 14px;
+    padding-left: 20px;
+  }
+  li {
+    font-size: 14px;
+    line-height: 1.7;
+    margin-bottom: 6px;
+  }
+  li:last-child {
+    margin-bottom: 0;
+  }
+  a {
+    color: var(--accent);
+  }
+  footer {
+    text-align: center;
+    padding-top: 24px;
+    margin-top: 40px;
+    border-top: 1px solid rgba(26, 46, 43, 0.14);
+  }
+  footer p {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 0;
+    text-align: center;
+  }
+  footer a {
+    color: var(--accent);
+  }
+  @media (min-width: 700px) {
+    body {
+      padding: 80px 20px 100px;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <a href="/" class="back-link">&larr; Autumn Assistant</a>
+
+  <h1>Privacy Policy</h1>
+  <p class="effective-date">Effective Date: September 27, 2026</p>
+
+  <p class="intro">Autumn Assistant ("we," "us," "our") provides a service that lets small businesses ("you," "business owner") handle customer conversations on WhatsApp, Instagram, and Messenger using AI, complete bookings and orders, and manage social media posts, all from one dashboard. This policy explains what data we collect, why, and how it's handled.</p>
+
+  <section>
+    <h2>1. Information We Collect</h2>
+    <p><strong>Your account information.</strong> When you sign up, we collect your name, email address, and a password. Your password is never stored in plain text — we store only a bcrypt hash of it. You may optionally provide a separate recovery email used to regain access to your dashboard if you lose your login.</p>
+    <p><strong>Your business configuration.</strong> We store the information you enter to run your assistant: business hours, the services and products you offer (names, prices, descriptions, durations), and your chosen reply voice/tone settings.</p>
+    <p><strong>Your channel credentials.</strong> When you connect WhatsApp, Instagram, or Messenger, we store the access tokens Meta issues for your business account, encrypted at rest using AES-256-GCM. These tokens are never stored in plain text. If you connect a voice line via Twilio, we store the phone number used to route calls (this is not a secret credential, so it is not encrypted).</p>
+    <p><strong>Your customers' conversation data.</strong> When a customer messages your business, we process the incoming message text and their platform identifier (a WhatsApp phone number, or an Instagram/Messenger sender ID) in order to generate an AI reply on your behalf. This conversation history is <strong>not stored in our database</strong> — it is held only in server memory for up to 24 hours of inactivity, after which it is automatically and permanently discarded, and it is also cleared any time our servers restart. The one exception: if a message is flagged for human review (for example, it mentions a refund, complaint, or a request to speak to a person), that specific message's text, the customer's platform ID, and the timestamp are saved to your dashboard's escalations list so you can follow up — this record is kept until you resolve it, and is not automatically deleted afterward.</p>
+    <p><strong>Booking and order records.</strong> When your assistant completes a booking or a sale, we permanently record the details (service or product, date/time or quantity/price, and the customer's platform identifier) so they appear on your dashboard.</p>
+    <p><strong>Photos you upload for social posts.</strong> If you use the auto-posting feature, we store the photo you upload and the AI-generated caption in our database until you delete the post or it is published.</p>
+    <p><strong>Push notification data.</strong> If you enable push notifications, we store a device token (issued by Expo, Apple/Google's push infrastructure) so we can alert you when a customer conversation needs your attention.</p>
+    <p><strong>Payment information.</strong> We do not collect or store your customers' card numbers or other payment details. Payments are handled entirely by Paystack; we only receive and store a payment reference and status (e.g., "paid," "pending").</p>
+  </section>
+
+  <section>
+    <h2>2. How We Use This Information</h2>
+    <p>We use this information solely to operate the service you've signed up for: generating AI replies to your customers, completing bookings and orders, sending you dashboard/account emails, alerting you to conversations that need attention, and generating captions for your social posts.</p>
+  </section>
+
+  <section>
+    <h2>3. Third-Party Service Providers</h2>
+    <p>To provide the service, we share data with the following providers, only as needed for their specific function:</p>
+    <ul>
+      <li><strong>Meta</strong> (WhatsApp Business Platform, Instagram, Messenger) — to send and receive messages on your behalf.</li>
+      <li><strong>Groq</strong> — processes your customers' message text and your business's configuration to generate AI replies and social post captions.</li>
+      <li><strong>Paystack</strong> — processes customer payments for orders; we never see raw card details.</li>
+      <li><strong>Resend</strong> — sends account and dashboard-recovery emails.</li>
+      <li><strong>Twilio</strong> — routes voice calls, if you've connected a voice line.</li>
+      <li><strong>Expo</strong> — delivers push notifications to your device, if enabled.</li>
+      <li><strong>Railway</strong> — hosts our servers and database; all data described above is stored on their infrastructure.</li>
+    </ul>
+    <p>We do not sell your data, or your customers' data, to any third party, for any purpose.</p>
+  </section>
+
+  <section>
+    <h2>4. Data Retention</h2>
+    <ul>
+      <li>Conversation message text: kept in memory only, up to 24 hours of inactivity, then permanently discarded (see above for the escalation exception).</li>
+      <li>Business account, configuration, channel credentials, bookings, orders, escalations, and post photos: retained for as long as your account is active.</li>
+      <li>We do not currently offer a self-service "delete my account" option. If you'd like your data deleted, email us at the address below and we will process the request manually.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>5. Data Security</h2>
+    <p>Channel access tokens are encrypted at rest (AES-256-GCM). Passwords are hashed with bcrypt, never stored in plain text. All traffic to and from our service is encrypted in transit (HTTPS). Access to your dashboard requires your login credentials or a private dashboard link.</p>
+  </section>
+
+  <section>
+    <h2>6. Children's Privacy</h2>
+    <p>Autumn Assistant is a business tool intended for business owners and is not directed at children. We do not knowingly collect information from children under 13.</p>
+  </section>
+
+  <section>
+    <h2>7. Changes to This Policy</h2>
+    <p>We may update this policy as the service changes. We'll update the effective date above when we do.</p>
+  </section>
+
+  <section>
+    <h2>8. Contact Us</h2>
+    <p>Questions about this policy, or requests to access or delete your data, can be sent to <a href="mailto:autumnhqapp@gmail.com">autumnhqapp@gmail.com</a>.</p>
+  </section>
+
+  <footer>
     <p>Contact: <a href="mailto:autumnhqapp@gmail.com">autumnhqapp@gmail.com</a></p>
   </footer>
 </div>
