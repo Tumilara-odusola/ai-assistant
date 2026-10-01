@@ -42,6 +42,7 @@ const {
   getBusinessByEmail,
   getBusinessByFacebookPageId,
   getAllBusinesses,
+  getAllBusinessesWithCounts,
   createBusiness,
   updateBusiness,
   setBusinessCredentials,
@@ -4122,6 +4123,97 @@ app.put('/api/businesses/:id/credentials', requireApiAuth, async (req, res) => {
 
     console.error('[SET BUSINESS CREDENTIALS ERROR]', err);
     res.status(500).json({ error: 'Failed to set credentials' });
+  }
+});
+
+// Admin listing for identifying test vs. real businesses — real
+// connection status and row counts across every business-scoped table,
+// not just names. See getAllBusinessesWithCounts in db.js.
+app.get('/api/businesses', requireApiAuth, async (req, res) => {
+  const businesses = await getAllBusinessesWithCounts();
+
+  res.status(200).json({
+    businesses: businesses.map((b) => ({
+      id: b.id,
+      name: b.name,
+      email: b.email,
+      createdAt: b.created_at,
+      channels: {
+        whatsapp: b.whatsapp_connected,
+        instagram: b.instagram_connected,
+        messenger: b.messenger_connected,
+        voice: b.voice_connected
+      },
+      counts: {
+        bookings: Number(b.bookings_count),
+        orders: Number(b.orders_count),
+        messages: Number(b.messages_count),
+        escalations: Number(b.escalations_count),
+        posts: Number(b.posts_count)
+      }
+    }))
+  });
+});
+
+// One-shot migration: copies the META_WHATSAPP_TEST_TOKEN/
+// META_WHATSAPP_PHONE_NUMBER_ID/META_INSTAGRAM_TOKEN env vars into a
+// business's own encrypted columns, reading them server-side (never
+// echoed back) — only fills fields that are currently empty, never
+// overwrites an existing value. These env vars are only ever consulted
+// as a fallback for FALLBACK_BUSINESS_ID (see resolveWhatsAppCredentials/
+// resolveInstagramToken above), so this is really only meaningful for
+// that one business, but isn't hardcoded to it.
+app.post('/api/businesses/:id/migrate-channel-env', requireApiAuth, async (req, res) => {
+  const businessId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(businessId)) {
+    return res.status(400).json({ error: 'businessId must be an integer' });
+  }
+
+  const business = await getBusinessById(businessId);
+
+  if (!business) {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+
+  const updateFields = {};
+
+  if (!business.whatsapp_phone_number_id && process.env.META_WHATSAPP_PHONE_NUMBER_ID) {
+    updateFields.whatsappPhoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
+  }
+
+  if (!business.whatsapp_token && process.env.META_WHATSAPP_TEST_TOKEN) {
+    updateFields.whatsappToken = process.env.META_WHATSAPP_TEST_TOKEN;
+  }
+
+  const envInstagramToken = process.env.META_INSTAGRAM_TOKEN || process.env.META_WHATSAPP_TEST_TOKEN;
+
+  if (!business.instagram_token && envInstagramToken) {
+    updateFields.instagramToken = envInstagramToken;
+  }
+
+  if (Object.keys(updateFields).length === 0) {
+    return res.status(200).json({
+      migrated: false,
+      message: 'Nothing to migrate — every field is already set on this business, or no env fallback is available',
+      whatsappPhoneNumberId: Boolean(business.whatsapp_phone_number_id),
+      whatsappToken: Boolean(business.whatsapp_token),
+      instagramToken: Boolean(business.instagram_token)
+    });
+  }
+
+  try {
+    const updated = await updateBusinessChannels(businessId, updateFields);
+
+    res.status(200).json({
+      migrated: true,
+      whatsappPhoneNumberId: Boolean(updated.whatsapp_phone_number_id),
+      whatsappToken: Boolean(updated.whatsapp_token),
+      instagramToken: Boolean(updated.instagram_token)
+    });
+  } catch (err) {
+    console.error('[MIGRATE CHANNEL ENV ERROR]', err);
+    res.status(500).json({ error: 'Failed to migrate credentials' });
   }
 });
 

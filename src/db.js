@@ -667,6 +667,31 @@ async function getAllBusinesses() {
   return rows;
 }
 
+// Richer admin listing for identifying test vs. real businesses — row
+// counts across every business-scoped table, plus real connection status
+// per channel (both id AND token present, not just one). Only checks
+// IS NOT NULL on token columns rather than decrypting them — this never
+// needs the actual credential values, just whether they exist.
+async function getAllBusinessesWithCounts() {
+  const { rows } = await pool.query(`
+    SELECT
+      b.id, b.name, b.email, b.created_at,
+      (b.whatsapp_phone_number_id IS NOT NULL AND b.whatsapp_token IS NOT NULL) AS whatsapp_connected,
+      (b.instagram_account_id IS NOT NULL AND b.instagram_token IS NOT NULL) AS instagram_connected,
+      (b.facebook_page_id IS NOT NULL AND b.facebook_page_token IS NOT NULL) AS messenger_connected,
+      (b.twilio_phone_number IS NOT NULL) AS voice_connected,
+      (SELECT COUNT(*) FROM bookings WHERE business_id = b.id) AS bookings_count,
+      (SELECT COUNT(*) FROM orders WHERE business_id = b.id) AS orders_count,
+      (SELECT COUNT(*) FROM messages WHERE business_id = b.id) AS messages_count,
+      (SELECT COUNT(*) FROM escalated_conversations WHERE business_id = b.id) AS escalations_count,
+      (SELECT COUNT(*) FROM posts WHERE business_id = b.id) AS posts_count
+    FROM businesses b
+    ORDER BY b.created_at ASC
+  `);
+
+  return rows;
+}
+
 const ADMIN_SESSION_TTL_DAYS = 30;
 
 async function createAdminSession() {
@@ -895,6 +920,7 @@ module.exports = {
   getBusinessByEmail,
   getBusinessByFacebookPageId,
   getAllBusinesses,
+  getAllBusinessesWithCounts,
   createBusiness,
   updateBusiness,
   setBusinessCredentials,
