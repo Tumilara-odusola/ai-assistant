@@ -43,6 +43,7 @@ const {
   getBusinessByFacebookPageId,
   getAllBusinesses,
   getAllBusinessesWithCounts,
+  deleteBusinessCascade,
   createBusiness,
   updateBusiness,
   setBusinessCredentials,
@@ -1032,21 +1033,22 @@ async function handleIncomingMessage(platform, senderId, text, businessProfile, 
 // SEND MESSAGE
 // ---------------------------------------------------------------------
 
-// Looks up business_id's own WhatsApp credentials. business_id=1 (this
-// deployment's original business) falls back to process.env when its own
-// columns are unset, so the original setup keeps working unchanged. Every
-// other business must supply its own — no silent fallback to the shared
-// env credentials, since that would send on their behalf from our account.
+// Looks up business_id's own WhatsApp credentials.
+//
+// TEMPORARY: the process.env fallback for FALLBACK_BUSINESS_ID is
+// disabled here on purpose — business_id=1 was just migrated to its own
+// stored, encrypted whatsapp_phone_number_id/whatsapp_token (see
+// POST /api/businesses/:id/migrate-channel-env), and this is the
+// verification step: confirm a real WhatsApp message still gets a reply
+// using ONLY the DB-stored values, zero reliance on process.env. If this
+// breaks, `git revert` this commit to restore the fallback immediately.
+// If it works, the env-var fallback block (and FALLBACK_BUSINESS_ID's
+// role here) can be removed for good — that's a separate follow-up.
 async function resolveWhatsAppCredentials(businessId) {
   const business = await getBusinessById(businessId);
 
-  let phoneNumberId = business?.whatsapp_phone_number_id;
-  let token = business?.whatsapp_token;
-
-  if (businessId === FALLBACK_BUSINESS_ID) {
-    phoneNumberId = phoneNumberId || process.env.META_WHATSAPP_PHONE_NUMBER_ID;
-    token = token || process.env.META_WHATSAPP_TEST_TOKEN;
-  }
+  const phoneNumberId = business?.whatsapp_phone_number_id;
+  const token = business?.whatsapp_token;
 
   if (!phoneNumberId || !token) {
     throw new Error(`Missing WhatsApp credentials for business ${businessId}`);
@@ -1055,14 +1057,13 @@ async function resolveWhatsAppCredentials(businessId) {
   return { phoneNumberId, token };
 }
 
+// TEMPORARY: same env-fallback disable as resolveWhatsAppCredentials
+// above, same reason — verifying business_id=1's migrated
+// instagram_token works standalone.
 async function resolveInstagramToken(businessId) {
   const business = await getBusinessById(businessId);
 
-  let token = business?.instagram_token;
-
-  if (businessId === FALLBACK_BUSINESS_ID) {
-    token = token || process.env.META_INSTAGRAM_TOKEN || process.env.META_WHATSAPP_TEST_TOKEN;
-  }
+  const token = business?.instagram_token;
 
   if (!token) {
     throw new Error(`Missing Instagram token for business ${businessId}`);
@@ -4214,6 +4215,39 @@ app.post('/api/businesses/:id/migrate-channel-env', requireApiAuth, async (req, 
   } catch (err) {
     console.error('[MIGRATE CHANNEL ENV ERROR]', err);
     res.status(500).json({ error: 'Failed to migrate credentials' });
+  }
+});
+
+// Transactional cascade delete. Hard-blocks FALLBACK_BUSINESS_ID (id=1,
+// "the real Barbershop") in code — this check exists independently of
+// whatever list a caller passes, so it can't be bypassed by a mistaken
+// request. Returns per-table deleted-row counts for an audit trail.
+app.delete('/api/businesses/:id', requireApiAuth, async (req, res) => {
+  const businessId = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(businessId)) {
+    return res.status(400).json({ error: 'businessId must be an integer' });
+  }
+
+  if (businessId === FALLBACK_BUSINESS_ID) {
+    return res.status(403).json({ error: `Refusing to delete business ${FALLBACK_BUSINESS_ID} — this is the primary business` });
+  }
+
+  try {
+    const result = await deleteBusinessCascade(businessId);
+
+    if (!result) {
+      return res.status(404).json({ error: 'Business not found' });
+    }
+
+    res.status(200).json({
+      deleted: true,
+      business: result.business,
+      deletedCounts: result.deletedCounts
+    });
+  } catch (err) {
+    console.error('[DELETE BUSINESS ERROR]', err);
+    res.status(500).json({ error: 'Failed to delete business' });
   }
 });
 

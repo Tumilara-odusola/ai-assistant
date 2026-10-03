@@ -907,6 +907,44 @@ async function clearPushToken(businessId) {
   await pool.query('UPDATE businesses SET push_token = NULL WHERE id = $1', [businessId]);
 }
 
+// Transactional cascade delete — none of these child tables have ON
+// DELETE CASCADE, so deleting a business with existing rows anywhere
+// would otherwise fail on a foreign key violation. All-or-nothing: if
+// any step fails, nothing is deleted. Does NOT guard against deleting
+// business_id=1 itself — that check belongs at the route/call-site level
+// (see FALLBACK_BUSINESS_ID in server.js), since this function has no
+// opinion on which business is "the real one."
+async function deleteBusinessCascade(id) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const childTables = ['messages', 'escalated_conversations', 'posts', 'bookings', 'orders', 'business_sessions'];
+    const deletedCounts = {};
+
+    for (const table of childTables) {
+      const result = await client.query(`DELETE FROM ${table} WHERE business_id = $1`, [id]);
+      deletedCounts[table] = result.rowCount;
+    }
+
+    const { rows } = await client.query('DELETE FROM businesses WHERE id = $1 RETURNING id, name', [id]);
+
+    if (rows.length === 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    await client.query('COMMIT');
+    return { business: rows[0], deletedCounts };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   pool,
   initDatabase,
@@ -921,6 +959,7 @@ module.exports = {
   getBusinessByFacebookPageId,
   getAllBusinesses,
   getAllBusinessesWithCounts,
+  deleteBusinessCascade,
   createBusiness,
   updateBusiness,
   setBusinessCredentials,
